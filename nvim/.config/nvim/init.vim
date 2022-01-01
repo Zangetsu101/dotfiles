@@ -26,6 +26,8 @@ Plug 'onsails/lspkind-nvim'
 Plug 'nvim-treesitter/nvim-treesitter', { 'do': ':TSUpdate' }
 Plug 'nvim-treesitter/nvim-treesitter-textobjects'
 Plug 'lukas-reineke/indent-blankline.nvim'
+Plug 'jiangmiao/auto-pairs'
+Plug 'matze/vim-move'
 
 call plug#end()
 
