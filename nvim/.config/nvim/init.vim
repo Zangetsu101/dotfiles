@@ -28,6 +28,8 @@ Plug 'nvim-treesitter/nvim-treesitter-textobjects'
 Plug 'lukas-reineke/indent-blankline.nvim'
 Plug 'jiangmiao/auto-pairs'
 Plug 'matze/vim-move'
+Plug 'kyazdani42/nvim-web-devicons'
+Plug 'kyazdani42/nvim-tree.lua'
 
 call plug#end()
 
@@ -41,6 +43,7 @@ nnoremap silent <leader><space> lua require('telescope.builtin').buffers()<CR>
 nnoremap <silent> <leader>sf :Telescope find_files<CR>
 nnoremap <silent> <leader>sb :Telescope current_buffer_fuzzy_find<CR>
 nnoremap <silent> <leader>sp :Telescope live_grep<CR>
+nnoremap <silent> <leader>f :NvimTreeToggle<CR>
 
 " set colorscheme
 set termguicolors
