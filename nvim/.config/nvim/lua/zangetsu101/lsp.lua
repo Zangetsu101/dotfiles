@@ -1,6 +1,9 @@
 local lsp_config = require('lspconfig')
 local servers = { 'tsserver' }
 
+local capabilities = vim.lsp.protocol.make_client_capabilities()
+capabilities = require('cmp_nvim_lsp').update_capabilities(capabilities)
+
 local on_attach = function(client, bufnr)
   local function buf_set_keymap(...) vim.api.nvim_buf_set_keymap(bufnr, ...) end
   local opts = { noremap=true, silent=true }
@@ -23,6 +26,30 @@ end
 
 for _, lsp in pairs(servers) do
   lsp_config[lsp].setup {
+    capabilities = capabilities,
     on_attach = on_attach
   }
 end
+
+local cmp = require('cmp')
+local lspkind = require('lspkind')
+local luasnip = require('luasnip')
+
+-- better autocompletion experience
+vim.o.completeopt = 'menuone,noselect'
+
+cmp.setup {
+	-- Format the autocomplete menu
+	formatting = {
+		format = lspkind.cmp_format()
+	},
+  snippet = {
+    expand = function(args)
+      luasnip.lsp_expand(args.body)
+    end
+  },
+  sources = {
+    { name = 'nvim_lsp' },
+    { name = 'luasnip' },
+  }
+}
