@@ -33,6 +33,11 @@ Plug 'kyazdani42/nvim-tree.lua'
 
 call plug#end()
 
+" set colorscheme
+set termguicolors
+colorscheme gruvbox
+set background=dark
+
 lua require('zangetsu101')
 
 " remap space as leader key
@@ -44,11 +49,6 @@ nnoremap <silent> <leader>sf :Telescope find_files<CR>
 nnoremap <silent> <leader>sb :Telescope current_buffer_fuzzy_find<CR>
 nnoremap <silent> <leader>sp :Telescope live_grep<CR>
 nnoremap <silent> <leader>f :NvimTreeToggle<CR>
-
-" set colorscheme
-set termguicolors
-colorscheme gruvbox
-set background=dark
 
 set noshowmode
 set signcolumn=yes
