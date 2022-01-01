@@ -32,7 +32,13 @@ call plug#end()
 lua require('zangetsu101')
 
 " remap space as leader key
-let mapleader=" "
+let mapleader=' '
+
+" add leader shortcuts
+nnoremap silent <leader><space> lua require('telescope.builtin').buffers()<CR>
+nnoremap <silent> <leader>sf :Telescope find_files<CR>
+nnoremap <silent> <leader>sb :Telescope current_buffer_fuzzy_find<CR>
+nnoremap <silent> <leader>sp :Telescope live_grep<CR>
 
 " set colorscheme
 set termguicolors
