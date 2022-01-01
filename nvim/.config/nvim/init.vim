@@ -6,12 +6,16 @@ endif
 
 call plug#begin('~/.config/nvim/plugged')
 
+Plug 'tpope/vim-commentary'
+Plug 'tpope/vim-fugitive'
+Plug 'tpope/vim-repeat'
+Plug 'tpope/vim-surround'
+Plug 'tpope/vim-unimpaired'
 Plug 'gruvbox-community/gruvbox'
 Plug 'nvim-lua/plenary.nvim'
 Plug 'nvim-telescope/telescope.nvim'
 Plug 'nvim-telescope/telescope-fzf-native.nvim', {'do': 'make' }
 Plug 'itchyny/lightline.vim'
-Plug 'tpope/vim-fugitive'
 Plug 'lewis6991/gitsigns.nvim'
 Plug 'neovim/nvim-lspconfig'
 Plug 'hrsh7th/nvim-cmp'
@@ -20,11 +24,18 @@ Plug 'L3MON4D3/LuaSnip'
 Plug 'saadparwaiz1/cmp_luasnip'
 Plug 'onsails/lspkind-nvim'
 Plug 'nvim-treesitter/nvim-treesitter', { 'do': ':TSUpdate' }
+Plug 'nvim-treesitter/nvim-treesitter-textobjects'
+Plug 'lukas-reineke/indent-blankline.nvim'
 
 call plug#end()
 
 lua require('zangetsu101')
 
+" remap space as leader key
+let mapleader=" "
+
+" set colorscheme
+set termguicolors
 colorscheme gruvbox
 set background=dark
 
@@ -44,6 +55,15 @@ set expandtab
 
 " enable autoindents
 set smartindent
+
+" enable break indent
+set breakindent
+
+" save undo history
+set undofile
+
+" decrease update time
+set updatetime=250
 
 " number of spaces used for autoindents
 set shiftwidth=2
