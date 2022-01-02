@@ -1,9 +1,11 @@
+" Install VimPlug:
 let data_dir = has('nvim') ? stdpath('data') . '/site' : '~/.vim'
 if empty(glob(data_dir . '/autoload/plug.vim'))
   silent execute '!curl -fLo '.data_dir.'/autoload/plug.vim --create-dirs https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim'
   autocmd VimEnter * PlugInstall --sync | source $MYVIMRC
 endif
 
+" Plugins:
 call plug#begin('~/.config/nvim/plugged')
 
 Plug 'tpope/vim-commentary'
@@ -33,28 +35,34 @@ Plug 'kyazdani42/nvim-tree.lua'
 
 call plug#end()
 
-" set colorscheme
+" Colorscheme:
 set termguicolors
+let g:gruvbox_italic=1
 colorscheme gruvbox
 set background=dark
 
+" Source all the lua files
 lua require('zangetsu101')
 
-" remap space as leader key
+" Leader Shortcuts:
 let mapleader=' '
 
-" add leader shortcuts
 nnoremap silent <leader><space> lua require('telescope.builtin').buffers()<CR>
 nnoremap <silent> <leader>sf :Telescope find_files<CR>
 nnoremap <silent> <leader>sb :Telescope current_buffer_fuzzy_find<CR>
 nnoremap <silent> <leader>sp :Telescope live_grep<CR>
 nnoremap <silent> <leader>f :NvimTreeToggle<CR>
 
+" Genereal Settings:
 set noshowmode
 set signcolumn=yes
 
 " enables syntax highlighting
 syntax on
+
+" enable current line highlight
+set cursorline
+set cursorlineopt=number
 
 " Better colors
 set termguicolors
@@ -102,9 +110,6 @@ set scrolloff=2
 
 " Save undo history
 set undofile
-
-" Enable mouse support
-set mouse=a
 
 " case insensitive search unless capital letters are used
 set ignorecase
