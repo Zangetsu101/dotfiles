@@ -34,10 +34,13 @@ local cmp = require('cmp')
 local lspkind = require('lspkind')
 local luasnip = require('luasnip')
 
--- better autocompletion experience
-vim.o.completeopt = 'menuone,noselect'
-
 cmp.setup {
+  completion = {
+    autocomplete = false
+  },
+  mapping = {
+    ['<C-Space>'] = cmp.mapping(cmp.mapping.complete(), { 'i', 'c' })
+  },
 	-- Format the autocomplete menu
 	formatting = {
 		format = lspkind.cmp_format()
