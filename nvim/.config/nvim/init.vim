@@ -47,7 +47,7 @@ lua require('zangetsu101')
 " Leader Shortcuts:
 let mapleader=' '
 
-nnoremap silent <leader><space> lua require('telescope.builtin').buffers()<CR>
+nnoremap <silent> <leader><space> :Telescope buffers<CR>
 nnoremap <silent> <leader>sf :Telescope find_files<CR>
 nnoremap <silent> <leader>sb :Telescope current_buffer_fuzzy_find<CR>
 nnoremap <silent> <leader>sp :Telescope live_grep<CR>
