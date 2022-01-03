@@ -1,5 +1,5 @@
 local lsp_config = require('lspconfig')
-local servers = { 'tsserver' }
+local servers = { 'tsserver', 'eslint', 'graphql' }
 
 local capabilities = vim.lsp.protocol.make_client_capabilities()
 capabilities = require('cmp_nvim_lsp').update_capabilities(capabilities)
