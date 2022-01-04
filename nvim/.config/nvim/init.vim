@@ -62,7 +62,6 @@ syntax on
 
 " enable current line highlight
 set cursorline
-set cursorlineopt=number
 
 " Better colors
 set termguicolors
