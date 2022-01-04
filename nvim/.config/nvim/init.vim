@@ -50,8 +50,9 @@ let mapleader=' '
 nnoremap <silent> <leader><space> :Telescope buffers<CR>
 nnoremap <silent> <leader>sf :Telescope find_files<CR>
 nnoremap <silent> <leader>sb :Telescope current_buffer_fuzzy_find<CR>
-nnoremap <silent> <leader>sp :Telescope live_grep<CR>
-nnoremap <silent> <leader>f :NvimTreeToggle<CR>
+nnoremap <leader>sg :lua require('telescope.builtin').grep_string {search=''}<left><left>
+nnoremap <silent> <leader>t :NvimTreeToggle<CR>
+nnoremap <silent> <leader>f :NvimTreeFindFile<CR>
 
 " Genereal Settings:
 set noshowmode
