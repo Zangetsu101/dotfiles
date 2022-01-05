@@ -44,13 +44,35 @@ set background=dark
 " Source all the lua files
 lua require('zangetsu101')
 
+" Commands:
+
+" Usage:
+"   :Files [hidden=false no_ignore=false]
+
+" Parameters:
+"   hidden     (boolean)  show hidden files or not
+"   no_ignore  (boolean)  show files ignored by .gitignore, .ignore, etc.
+
+command -nargs=* Files Telescope find_files <args>
+
+" Usage:
+"   :Ag findMe
+"
+" Parameters:
+"   findMe  (string)  string to search for
+
+command -nargs=1 Ag Telescope grep_string search=<args>
+
+command Buffers Telescope buffers
+command BLines Telescope current_buffer_fuzzy_find
+
 " Leader Shortcuts:
 let mapleader=' '
 
 nnoremap <silent> <leader><space> :Telescope buffers<CR>
 nnoremap <silent> <leader>sf :Telescope find_files<CR>
 nnoremap <silent> <leader>sb :Telescope current_buffer_fuzzy_find<CR>
-nnoremap <leader>sg :lua require('telescope.builtin').grep_string {search=''}<left><left>
+nnoremap <silent> <leader>sg :Telescope grep_string<CR>
 nnoremap <silent> <leader>t :NvimTreeToggle<CR>
 nnoremap <silent> <leader>f :NvimTreeFindFile<CR>
 
