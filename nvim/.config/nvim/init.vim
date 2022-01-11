@@ -35,6 +35,9 @@ Plug 'kyazdani42/nvim-tree.lua'
 
 call plug#end()
 
+" Leader Shortcuts:
+let mapleader=' '
+
 " Colorscheme:
 set termguicolors
 let g:gruvbox_italic=1
@@ -65,9 +68,6 @@ command -nargs=1 Ag Telescope grep_string search=<args>
 
 command Buffers Telescope buffers
 command BLines Telescope current_buffer_fuzzy_find
-
-" Leader Shortcuts:
-let mapleader=' '
 
 nnoremap <silent> <leader><space> :Telescope buffers<CR>
 nnoremap <silent> <leader>sf :Telescope find_files<CR>
