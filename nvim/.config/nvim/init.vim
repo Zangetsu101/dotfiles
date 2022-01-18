@@ -33,6 +33,7 @@ Plug 'matze/vim-move'
 Plug 'kyazdani42/nvim-web-devicons'
 Plug 'kyazdani42/nvim-tree.lua'
 Plug 'williamboman/nvim-lsp-installer'
+Plug 'b0o/schemastore.nvim'
 
 call plug#end()
 

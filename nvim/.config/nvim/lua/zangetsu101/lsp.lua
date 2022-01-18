@@ -1,5 +1,5 @@
 local lsp_installer = require('nvim-lsp-installer')
-local servers = { 'clangd', 'dockerls', 'eslint', 'graphql', 'jsonls', 'ltex', 'sumneko_lua', 'tsserver', 'vimls' }
+local servers = { 'clangd', 'dockerls', 'eslint', 'graphql', 'jsonls', 'ltex', 'sumneko_lua', 'tsserver', 'vimls', 'yamlls' }
 
 local capabilities = vim.lsp.protocol.make_client_capabilities()
 capabilities = require('cmp_nvim_lsp').update_capabilities(capabilities)
@@ -49,6 +49,33 @@ local enhance_server_opts = {
       Lua = {
         diagnostics = {
           globals = { 'vim' }
+        }
+      }
+    }
+  end,
+  ['jsonls'] = function(opts)
+    opts.settings = {
+      json = {
+        schemas = require('schemastore').json.schemas {
+          select = {
+            '.eslintrc',
+            'lerna.json',
+            'package.json',
+            'prettierrc.json',
+            'tsconfig.json',
+            'tslint.json'
+          }
+        }
+      }
+    }
+  end,
+  ['yamlls'] = function(opts)
+    opts.settings = {
+      json = {
+        schemas = require('schemastore').json.schemas {
+          select = {
+            'docker-compose.yml'
+          }
         }
       }
     }
