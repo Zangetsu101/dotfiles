@@ -1,5 +1,9 @@
 local telescope = require('telescope')
 
-telescope.setup {}
+telescope.setup {
+  defaults = {
+    path_display = {'truncate'}
+  }
+}
 
 telescope.load_extension('fzf')
