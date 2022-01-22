@@ -21,6 +21,10 @@ local on_attach = function(client, bufnr)
   buf_set_keymap('n', '[d', '<cmd>lua vim.lsp.diagnostic.goto_prev()<CR>', opts)
   buf_set_keymap('n', ']d', '<cmd>lua vim.lsp.diagnostic.goto_next()<CR>', opts)
   buf_set_keymap('n', '<space>q', '<cmd>lua vim.lsp.diagnostic.set_loclist()<CR>', opts)
+
+  if client.supports_method('textDocument/formatting') then
+    vim.cmd [[command Format lua vim.lsp.buf.formatting()]]
+  end
 end
 
 for _, name in pairs(servers) do
@@ -40,19 +44,6 @@ local enhance_server_opts = {
       on_attach(client, bufnr)
     end
   end,
-  ['ltex'] = function(opts)
-    opts.filetypes = { 'gitcommit' }
-    opts.single_file_support = true
-  end,
-  ['sumneko_lua'] = function(opts)
-    opts.settings = {
-      Lua = {
-        diagnostics = {
-          globals = { 'vim' }
-        }
-      }
-    }
-  end,
   ['jsonls'] = function(opts)
     opts.settings = {
       json = {
@@ -68,6 +59,25 @@ local enhance_server_opts = {
         }
       }
     }
+  end,
+  ['ltex'] = function(opts)
+    opts.filetypes = { 'gitcommit' }
+    opts.single_file_support = true
+  end,
+  ['sumneko_lua'] = function(opts)
+    opts.settings = {
+      Lua = {
+        diagnostics = {
+          globals = { 'vim' }
+        }
+      }
+    }
+  end,
+  ['tsserver'] = function(opts)
+    opts.on_attach = function(client, bufnr)
+      client.resolved_capabilities.document_formatting = false
+      on_attach(client, bufnr)
+    end
   end,
   ['yamlls'] = function(opts)
     opts.settings = {

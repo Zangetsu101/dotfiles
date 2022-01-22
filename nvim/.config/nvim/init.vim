@@ -83,6 +83,7 @@ nnoremap <silent> <leader><space> :Telescope buffers<CR>
 nnoremap <silent> <leader>sf :Telescope find_files<CR>
 nnoremap <silent> <leader>sb :Telescope current_buffer_fuzzy_find<CR>
 nnoremap <silent> <leader>sg :Telescope grep_string<CR>
+nnoremap <silent> <leader>sr :Telescope resume<CR>
 nnoremap <silent> <leader>t :NvimTreeToggle<CR>
 nnoremap <silent> <leader>f :NvimTreeFindFile<CR>
 
