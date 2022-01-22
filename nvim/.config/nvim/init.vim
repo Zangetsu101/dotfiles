@@ -25,7 +25,7 @@ Plug 'hrsh7th/cmp-nvim-lsp'
 Plug 'L3MON4D3/LuaSnip'
 Plug 'saadparwaiz1/cmp_luasnip'
 Plug 'onsails/lspkind-nvim'
-Plug 'nvim-treesitter/nvim-treesitter', { 'do': ':TSUpdate' }
+Plug 'nvim-treesitter/nvim-treesitter'
 Plug 'nvim-treesitter/nvim-treesitter-textobjects'
 Plug 'lukas-reineke/indent-blankline.nvim'
 Plug 'jiangmiao/auto-pairs'
@@ -34,11 +34,19 @@ Plug 'kyazdani42/nvim-web-devicons'
 Plug 'kyazdani42/nvim-tree.lua'
 Plug 'williamboman/nvim-lsp-installer'
 Plug 'b0o/schemastore.nvim'
+Plug 'glacambre/firenvim'
 
 call plug#end()
 
 " Leader Shortcuts:
 let mapleader=' '
+
+call plug#end()
+
+" FireNvim:
+if exists('g:started_by_firenvim')
+  set guifont=monospace:h12
+endif
 
 " Colorscheme:
 set termguicolors
