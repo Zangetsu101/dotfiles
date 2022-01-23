@@ -23,7 +23,7 @@ local on_attach = function(client, bufnr)
   buf_set_keymap('n', '<space>q', '<cmd>lua vim.lsp.diagnostic.set_loclist()<CR>', opts)
 
   if client.supports_method('textDocument/formatting') then
-    vim.cmd [[command Format lua vim.lsp.buf.formatting()]]
+    vim.cmd [[command-buffer Format lua vim.lsp.buf.formatting()]]
   end
 end
 
