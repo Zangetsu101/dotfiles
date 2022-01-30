@@ -54,6 +54,7 @@ set termguicolors
 let g:gruvbox_italic=1
 colorscheme gruvbox
 set background=dark
+highlight link LspSignatureActiveParameter GruvboxYellow
 
 " Source all the lua files
 lua require('zangetsu101')

@@ -6,6 +6,7 @@ nvim_tree.setup {
   filters = {
     dotfiles = true
   },
+  hijack_cursor = true,
   view = {
     mappings = {
       custom_only = true,
