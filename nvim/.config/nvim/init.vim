@@ -76,15 +76,15 @@ command -nargs=* Files Telescope find_files <args>
 " Parameters:
 "   findMe  (string)  string to search for
 
-command -nargs=1 Ag Telescope grep_string search=<args>
+command -nargs=1 Ag lua require('telescope.builtin').grep_string {search=<f-args>}
 
-command Buffers Telescope buffers
 command BLines Telescope current_buffer_fuzzy_find
 
 nnoremap <silent> <leader><space> :Telescope buffers<CR>
 nnoremap <silent> <leader>sf :Telescope find_files<CR>
 nnoremap <silent> <leader>sb :Telescope current_buffer_fuzzy_find<CR>
 nnoremap <silent> <leader>sg :Telescope grep_string<CR>
+nnoremap <silent> <leader>sl :Telescope live_grep<CR>
 nnoremap <silent> <leader>sr :Telescope resume<CR>
 nnoremap <silent> <leader>t :NvimTreeToggle<CR>
 nnoremap <silent> <leader>f :NvimTreeFindFile<CR>
