@@ -35,7 +35,8 @@ Plug 'kyazdani42/nvim-tree.lua'
 Plug 'williamboman/nvim-lsp-installer'
 Plug 'b0o/schemastore.nvim'
 Plug 'glacambre/firenvim'
-Plug 'ray-x/lsp_signature.nvim'
+Plug 'folke/lua-dev.nvim'
+Plug 'p00f/nvim-ts-rainbow'
 
 call plug#end()
 
