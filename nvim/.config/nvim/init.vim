@@ -37,6 +37,7 @@ Plug 'b0o/schemastore.nvim'
 Plug 'glacambre/firenvim'
 Plug 'folke/lua-dev.nvim'
 Plug 'p00f/nvim-ts-rainbow'
+Plug 'mfussenegger/nvim-dap'
 
 call plug#end()
 
