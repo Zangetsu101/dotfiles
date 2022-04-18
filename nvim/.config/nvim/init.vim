@@ -78,9 +78,14 @@ command -nargs=* Files Telescope find_files <args>
 " Parameters:
 "   findMe  (string)  string to search for
 
-command -nargs=1 Ag lua require('telescope.builtin').grep_string {search=<f-args>}
+command -nargs=1 Ag lua require'telescope.builtin'.grep_string {search=<f-args>}
 
 command BLines Telescope current_buffer_fuzzy_find
+
+" nvim-dap
+command Breakpoint lua require'dap'.toggle_breakpoint()
+command Dap lua require'dap'.continue()
+command Repl lua require'dap'.repl.open()
 
 nnoremap <silent> <leader><space> :Telescope buffers<CR>
 nnoremap <silent> <leader>sf :Telescope find_files<CR>
