@@ -38,6 +38,7 @@ Plug 'glacambre/firenvim'
 Plug 'folke/lua-dev.nvim'
 Plug 'p00f/nvim-ts-rainbow'
 Plug 'mfussenegger/nvim-dap'
+Plug 'windwp/nvim-ts-autotag'
 
 call plug#end()
 
