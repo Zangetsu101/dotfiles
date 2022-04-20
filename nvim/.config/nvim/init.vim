@@ -28,7 +28,6 @@ Plug 'onsails/lspkind-nvim'
 Plug 'nvim-treesitter/nvim-treesitter'
 Plug 'nvim-treesitter/nvim-treesitter-textobjects'
 Plug 'lukas-reineke/indent-blankline.nvim'
-Plug 'jiangmiao/auto-pairs'
 Plug 'matze/vim-move'
 Plug 'kyazdani42/nvim-web-devicons'
 Plug 'kyazdani42/nvim-tree.lua'
@@ -39,6 +38,7 @@ Plug 'folke/lua-dev.nvim'
 Plug 'p00f/nvim-ts-rainbow'
 Plug 'mfussenegger/nvim-dap'
 Plug 'windwp/nvim-ts-autotag'
+Plug 'windwp/nvim-autopairs'
 
 call plug#end()
 
