@@ -74,3 +74,5 @@ dap.configurations.typescriptreact = { -- change to typescript if needed
     webRoot = "${workspaceFolder}"
   }
 }
+
+dap.configurations.typescript = dap.configurations.typescriptreact
