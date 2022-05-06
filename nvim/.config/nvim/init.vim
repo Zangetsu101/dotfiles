@@ -152,3 +152,7 @@ set undofile
 " case insensitive search unless capital letters are used
 set ignorecase
 set smartcase
+
+" folding
+set foldmethod=expr
+set foldexpr=nvim_treesitter#foldexpr()
