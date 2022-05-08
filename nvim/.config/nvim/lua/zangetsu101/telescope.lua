@@ -4,9 +4,6 @@ local layout_actions = require('telescope.actions.layout')
 telescope.setup {
   defaults = {
     path_display = {'truncate'},
-    preview = {
-      hide_on_startup = true
-    },
     mappings = {
       n = {
         ["<C-h>"] = layout_actions.toggle_preview
@@ -14,6 +11,13 @@ telescope.setup {
       i = {
         ["<C-h>"] = layout_actions.toggle_preview
       }
+    }
+  },
+  pickers = {
+    find_files = {
+      preview = {
+        hide_on_startup = true
+      },
     }
   }
 }
