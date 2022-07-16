@@ -39,6 +39,7 @@ Plug 'p00f/nvim-ts-rainbow'
 Plug 'mfussenegger/nvim-dap'
 Plug 'windwp/nvim-ts-autotag'
 Plug 'windwp/nvim-autopairs'
+Plug 'rafamadriz/friendly-snippets'
 
 call plug#end()
 
