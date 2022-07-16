@@ -1,4 +1,7 @@
-local lsp_installer = require('nvim-lsp-installer')
+require('nvim-lsp-installer').setup {
+  automatic_installation = true
+}
+local lspconfig = require('lspconfig')
 local servers = { 'clangd', 'dockerls', 'eslint', 'graphql', 'jsonls', 'ltex', 'sumneko_lua', 'tsserver', 'vimls', 'yamlls' }
 
 local capabilities = vim.lsp.protocol.make_client_capabilities()
@@ -24,16 +27,6 @@ local on_attach = function(client, bufnr)
 
   if client.supports_method('textDocument/formatting') then
     vim.cmd [[command!-buffer Format lua vim.lsp.buf.formatting()]]
-  end
-end
-
-for _, name in pairs(servers) do
-  local server_is_found, server = lsp_installer.get_server(name)
-  if server_is_found then
-    if not server:is_installed() then
-      print('Installing ' .. name)
-      server:install()
-    end
   end
 end
 
@@ -97,15 +90,14 @@ local enhance_server_opts = {
   end
 }
 
-lsp_installer.on_server_ready(function(server)
+for _, name in pairs(servers) do
   local opts = {
     capabilities = capabilities,
     on_attach = on_attach
   }
 
-  if enhance_server_opts[server.name] then
-    enhance_server_opts[server.name](opts)
+  if enhance_server_opts[name] then
+    enhance_server_opts[name](opts)
   end
-
-  server:setup(opts)
-end)
+  lspconfig[name].setup(opts)
+end
