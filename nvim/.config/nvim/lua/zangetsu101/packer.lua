@@ -54,6 +54,7 @@ return require('packer').startup(function(use)
 			vim.g.matchup_matchparen_offscreen = { method = "popup" }
 		end
 	}
+	use "simrat39/rust-tools.nvim"
 	use 'windwp/nvim-ts-autotag'
 	use 'tpope/vim-fugitive'
 	use 'tpope/vim-rhubarb'

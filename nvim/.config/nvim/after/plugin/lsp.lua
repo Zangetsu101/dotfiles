@@ -50,7 +50,7 @@ local on_attach = function(_, bufnr)
   vim.api.nvim_buf_create_user_command(bufnr, 'Format', function(_)
   vim.lsp.buf.format {
     async = true,
-    name = 'eslint'
+    filter = function (client) return client.name ~= 'tsserver' end
   }
   end, { desc = 'Format current buffer with LSP' })
 end
@@ -65,6 +65,7 @@ local servers = {
   dockerls = {},
   eslint = {},
   graphql = {},
+  rust_analyzer = {},
   jsonls = {
     json = {
       schemas = require('schemastore').json.schemas {
@@ -149,6 +150,26 @@ mason_lspconfig.setup_handlers {
     require('lspconfig')[server_name].setup(opts)
   end,
 }
+
+local rt = require('rust-tools')
+
+rt.setup({
+  tools = {
+    inlay_hints = {
+      auto = false
+    },
+    runnables = {
+      use_telescope = true
+    }
+  },
+  server = {
+    on_attach = function(client, bufnr)
+      -- Hover actions
+      on_attach(client, bufnr)
+      vim.keymap.set('n', '<C-k>', rt.hover_actions.hover_actions, { buffer = bufnr })
+    end,
+  }
+})
 
 -- Turn on lsp status information
 require('fidget').setup()
