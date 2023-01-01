@@ -1,7 +1,7 @@
 local treesitter = require('nvim-treesitter.configs')
 
 treesitter.setup {
-  ensure_installed = {'c', 'cpp', 'css','dockerfile', 'graphql', 'jsonc', 'tsx', 'typescript'},
+  ensure_installed = { 'c', 'cpp', 'css', 'dockerfile', 'graphql', 'help', 'jsonc', 'lua', 'tsx', 'typescript' },
   autotag = {
     enable = true
   },
@@ -11,10 +11,21 @@ treesitter.setup {
   indent = {
     enable = true
   },
-  rainbow = {
+  matchup = {
+    enable = true
+  },
+  context_commentstring = {
     enable = true,
-    extended_mode = true,
-    max_file_lines= nil
+    enable_autocmd = false
+  },
+  incremental_selection = {
+    enable = true,
+    keymaps = {
+      init_selection = '<c-space>',
+      node_incremental = '<c-space>',
+      scope_incremental = '<c-s>',
+      node_decremental = '<c-backspace>'
+    }
   },
   textobjects = {
     select = {
@@ -22,6 +33,8 @@ treesitter.setup {
       lookahead = true, -- Automatically jump forward to textobj, similar to targets.vim
       keymaps = {
         -- You can use the capture groups defined in textobjects.scm
+        ['aa'] = '@parameter.outer',
+        ['ia'] = '@parameter.inner',
         ['af'] = '@function.outer',
         ['if'] = '@function.inner',
         ['ac'] = '@class.outer',
@@ -46,6 +59,15 @@ treesitter.setup {
       goto_previous_end = {
         ['[M'] = '@function.outer',
         ['[]'] = '@class.outer'
+      },
+    },
+    swap = {
+      enable = true,
+      swap_next = {
+        ['<leader>a'] = '@parameter.inner'
+      },
+      swap_previous = {
+        ['<leader>A'] = '@parameter.inner'
       }
     }
   }
