@@ -150,26 +150,5 @@ mason_lspconfig.setup_handlers {
     require('lspconfig')[server_name].setup(opts)
   end,
 }
-
-local rt = require('rust-tools')
-
-rt.setup({
-  tools = {
-    inlay_hints = {
-      auto = false
-    },
-    runnables = {
-      use_telescope = true
-    }
-  },
-  server = {
-    on_attach = function(client, bufnr)
-      -- Hover actions
-      on_attach(client, bufnr)
-      vim.keymap.set('n', '<C-k>', rt.hover_actions.hover_actions, { buffer = bufnr })
-    end,
-  }
-})
-
 -- Turn on lsp status information
 require('fidget').setup()

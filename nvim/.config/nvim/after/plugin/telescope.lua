@@ -1,4 +1,7 @@
-pcall(require('telescope').load_extension, 'fzf')
+local telescope = require('telescope')
+
+pcall(telescope.load_extension, 'fzf')
+pcall(telescope.load_extension, 'ui-select')
 
 local builtin = require('telescope.builtin')
 
