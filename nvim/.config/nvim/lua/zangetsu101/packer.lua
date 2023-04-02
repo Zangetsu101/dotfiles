@@ -72,5 +72,6 @@ return require('packer').startup(function(use)
 	use 'matze/vim-move'
 	use 'rstacruz/vim-closer'
 	use 'nvim-telescope/telescope-ui-select.nvim'
+	use 'simrat39/rust-tools.nvim'
 
 end)

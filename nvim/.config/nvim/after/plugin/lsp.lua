@@ -65,7 +65,6 @@ local servers = {
   dockerls = {},
   eslint = {},
   graphql = {},
-  rust_analyzer = {},
   jsonls = {
     json = {
       schemas = require('schemastore').json.schemas {
@@ -149,6 +148,16 @@ mason_lspconfig.setup_handlers {
     end
     require('lspconfig')[server_name].setup(opts)
   end,
+}
+
+local rt = require("rust-tools")
+
+rt.setup {
+  server = {
+    on_attach = function(_, bufnr)
+      on_attach(_, bufnr)
+    end,
+  }
 }
 -- Turn on lsp status information
 require('fidget').setup()
