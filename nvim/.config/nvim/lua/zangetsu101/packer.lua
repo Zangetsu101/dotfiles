@@ -73,5 +73,6 @@ return require('packer').startup(function(use)
 	use 'rstacruz/vim-closer'
 	use 'nvim-telescope/telescope-ui-select.nvim'
 	use 'simrat39/rust-tools.nvim'
+	use("aserowy/tmux.nvim")
 
 end)
