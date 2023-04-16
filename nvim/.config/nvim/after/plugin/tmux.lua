@@ -1,7 +1,13 @@
 local tmux = require('tmux')
 
 tmux.setup {
+  copy_sync = {
+    sync_unnamed = false
+  },
   navigation = {
+    enable_default_keybindings = false,
+  },
+  resize = {
     enable_default_keybindings = false,
   },
 }
