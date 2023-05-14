@@ -1,0 +1,7 @@
+[user]
+  email = haidertameem@gmail.com
+  name = Tameem Bin Haider
+[alias]
+  st = status
+  br = branch
+  co = checkout
