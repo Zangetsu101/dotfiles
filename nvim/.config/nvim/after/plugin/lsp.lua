@@ -87,6 +87,7 @@ local servers = {
       }
     }
   },
+  taplo = {},
   ltex = {},
   vimls = {},
   yamlls = {
