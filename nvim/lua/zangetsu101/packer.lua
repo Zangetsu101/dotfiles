@@ -1,5 +1,4 @@
 return require('packer').startup(function(use)
-
 	use 'wbthomason/packer.nvim'
 
 	use {
@@ -24,7 +23,7 @@ return require('packer').startup(function(use)
 			'williamboman/mason-lspconfig.nvim',
 
 			-- Useful status updates for LSP
-			'j-hui/fidget.nvim',
+			{ 'j-hui/fidget.nvim', tag = 'legacy' },
 
 			-- Additional lua configuration, makes nvim stuff amazing
 			'folke/neodev.nvim',
@@ -74,5 +73,4 @@ return require('packer').startup(function(use)
 	use 'nvim-telescope/telescope-ui-select.nvim'
 	use 'simrat39/rust-tools.nvim'
 	use("aserowy/tmux.nvim")
-
 end)
