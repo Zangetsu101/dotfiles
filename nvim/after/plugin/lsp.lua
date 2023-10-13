@@ -90,6 +90,7 @@ local servers = {
   taplo = {},
   ltex = {},
   vimls = {},
+  tailwindcss = {},
   yamlls = {
     json = {
       schemas = require('schemastore').json.schemas {
