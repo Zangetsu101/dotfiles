@@ -48,10 +48,10 @@ local on_attach = function(_, bufnr)
 
   -- Create a command `:Format` local to the LSP buffer
   vim.api.nvim_buf_create_user_command(bufnr, 'Format', function(_)
-  vim.lsp.buf.format {
-    async = true,
-    filter = function (client) return client.name ~= 'tsserver' end
-  }
+    vim.lsp.buf.format {
+      async = true,
+      filter = function(client) return client.name ~= 'tsserver' end
+    }
   end, { desc = 'Format current buffer with LSP' })
 end
 
@@ -79,7 +79,7 @@ local servers = {
         replace = {
           ['tsconfig.json'] = {
             description = 'JSON schema for typescript configuration files',
-            fileMatch = {'tsconfig*.json'},
+            fileMatch = { 'tsconfig*.json' },
             name = 'tsconfig.json',
             url = 'https://json.schemastore.org/tsconfig.json'
           }
