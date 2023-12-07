@@ -33,3 +33,9 @@ imap('<C-k>', vim.lsp.buf.signature_help, 'Signature Documentation')
 
 -- Lesser used LSP functionality
 nmap('gD', vim.lsp.buf.declaration, '[G]oto [D]eclaration')
+
+vim.api.nvim_buf_create_user_command(bufnr, 'Format', function(_)
+  vim.lsp.buf.format {
+    async = true,
+  }
+end, { desc = 'Format current buffer with LSP' })
