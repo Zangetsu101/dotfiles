@@ -4,6 +4,19 @@ pcall(telescope.load_extension, 'fzf')
 pcall(telescope.load_extension, 'ui-select')
 
 local builtin = require('telescope.builtin')
+local actions = require('telescope.actions')
+
+telescope.setup {
+  pickers = {
+    buffers = {
+      mappings = {
+        n = {
+          x = actions.delete_buffer
+        }
+      }
+    }
+  }
+}
 
 local function buf_vtext()
   local a_orig = vim.fn.getreg('a')
