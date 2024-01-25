@@ -79,4 +79,5 @@ return require('packer').startup(function(use)
 		tag = '3.0.2',
 		ft = { 'haskell', 'lhaskell', 'cabal', 'cabalproject' }
 	}
+	use({ "iamcco/markdown-preview.nvim", run = "cd app && npm install", setup = function() vim.g.mkdp_filetypes = { "markdown" } end, ft = { "markdown" }, })
 end)
