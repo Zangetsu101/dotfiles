@@ -1,0 +1,37 @@
+""" Map leader to space ---------------------
+let mapleader=" "
+
+""" Plugins  --------------------------------
+set surround
+set commentary
+set argtextobj
+set NERDTree
+
+""" Plugin settings -------------------------
+let g:argtextobj_pairs="[:],(:),<:>"
+
+""" Common settings -------------------------
+set showmode
+set so=5
+set incsearch
+set nu
+set rnu
+set scrolloff=5
+
+""" Idea specific settings ------------------
+set ideajoin
+set ideastatusicon=gray
+set idearefactormode=keep
+
+""" Mappings --------------------------------
+map <leader>rn <Action>(RenameElement)
+map <leader>hr <Action>(Vcs.RollbackChangedLines)
+map <leader>sf <Action>(GotoFile)
+map <leader>f <Action>(SelectInProjectView)
+map <leader>gr <Action>(FindUsages)
+map [c <Action>(VcsShowPrevChangeMarker)
+map ]c <Action>(VcsShowNextChangeMarker)
+map ]d <Action>(GotoNextError)
+map [d <Action>(GotoPreviousError)
+
+command! Format action ReformatCode
