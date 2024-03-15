@@ -117,7 +117,7 @@ local enhance_server_opts = {
     end
   end,
   ['ltex'] = function(opts)
-    opts.filetypes = { 'gitcommit' }
+    opts.filetypes = { 'gitcommit', 'markdown' }
     opts.single_file_support = true
   end
 }
