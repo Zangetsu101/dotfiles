@@ -38,7 +38,8 @@ return require('packer').startup(function(use)
 	use { -- Highlight, edit, and navigate code
 		'nvim-treesitter/nvim-treesitter',
 		run = function()
-			pcall(require('nvim-treesitter.install').update { with_sync = true })
+			local ts_update = require('nvim-treesitter.install').update({ with_sync = true })
+			ts_update()
 		end,
 	}
 
@@ -79,5 +80,6 @@ return require('packer').startup(function(use)
 		tag = '3.0.2',
 		ft = { 'haskell', 'lhaskell', 'cabal', 'cabalproject' }
 	}
-	use({ "iamcco/markdown-preview.nvim", run = "cd app && npm install", setup = function() vim.g.mkdp_filetypes = { "markdown" } end, ft = { "markdown" }, })
+	use({ "iamcco/markdown-preview.nvim", run = "cd app && npm install",
+		setup = function() vim.g.mkdp_filetypes = { "markdown" } end, ft = { "markdown" }, })
 end)

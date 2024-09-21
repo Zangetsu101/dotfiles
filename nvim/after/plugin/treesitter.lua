@@ -1,7 +1,8 @@
 local treesitter = require('nvim-treesitter.configs')
 
 treesitter.setup {
-  ensure_installed = { 'c', 'cpp', 'css', 'dockerfile', 'graphql', 'help', 'jsonc', 'lua', 'rust', 'tsx', 'typescript' },
+  ensure_installed = { 'c', 'cpp', 'css', 'dockerfile', 'graphql', 'help', 'jsonc', 'lua', 'rust', 'tsx', 'typescript',
+    'vimdoc', 'markdown', 'markdown_inline', 'bash', 'diff', 'html', 'luadoc', 'query', 'vim' },
   autotag = {
     enable = true
   },
