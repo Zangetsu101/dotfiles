@@ -61,10 +61,10 @@ return require('packer').startup(function(use)
 	use 'navarasu/onedark.nvim'
 	use 'tpope/vim-unimpaired'
 	use 'lewis6991/gitsigns.nvim'
-	use 'nvim-lualine/lualine.nvim' -- Fancier statusline
+	use 'nvim-lualine/lualine.nvim'          -- Fancier statusline
 	use 'lukas-reineke/indent-blankline.nvim' -- Add indentation guides even on blank lines
-	use 'numToStr/Comment.nvim' -- "gc" to comment visual regions/lines
-	use 'tpope/vim-sleuth' -- Detect tabstop and shiftwidth automatically
+	use 'numToStr/Comment.nvim'              -- "gc" to comment visual regions/lines
+	use 'tpope/vim-sleuth'                   -- Detect tabstop and shiftwidth automatically
 	use 'b0o/schemastore.nvim'
 	use 'tpope/vim-repeat'
 	use 'tpope/vim-surround'
@@ -80,6 +80,17 @@ return require('packer').startup(function(use)
 		tag = '3.0.2',
 		ft = { 'haskell', 'lhaskell', 'cabal', 'cabalproject' }
 	}
-	use({ "iamcco/markdown-preview.nvim", run = "cd app && npm install",
-		setup = function() vim.g.mkdp_filetypes = { "markdown" } end, ft = { "markdown" }, })
+	use {
+		"pmizio/typescript-tools.nvim",
+		requires = { "nvim-lua/plenary.nvim", "neovim/nvim-lspconfig" },
+		config = function()
+			require("typescript-tools").setup {}
+		end,
+	}
+	use({
+		"iamcco/markdown-preview.nvim",
+		run = "cd app && npm install",
+		setup = function() vim.g.mkdp_filetypes = { "markdown" } end,
+		ft = { "markdown" },
+	})
 end)
