@@ -72,7 +72,7 @@ return require('packer').startup(function(use)
 	use 'matze/vim-move'
 	use 'rstacruz/vim-closer'
 	use 'nvim-telescope/telescope-ui-select.nvim'
-	use 'simrat39/rust-tools.nvim'
+	use { 'mrcjkb/rustaceanvim', tag = 'v5.8.0' }
 	use 'aserowy/tmux.nvim'
 	use 'nvim-treesitter/nvim-treesitter-context'
 	use 'mfussenegger/nvim-dap'

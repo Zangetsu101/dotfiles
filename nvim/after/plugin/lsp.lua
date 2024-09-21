@@ -150,16 +150,8 @@ mason_lspconfig.setup_handlers {
     end
     require('lspconfig')[server_name].setup(opts)
   end,
+  ['rust_analyzer'] = function() end
 }
 
-local rt = require("rust-tools")
-
-rt.setup {
-  server = {
-    on_attach = function(_, bufnr)
-      on_attach(_, bufnr)
-    end,
-  }
-}
 -- Turn on lsp status information
 require('fidget').setup()
