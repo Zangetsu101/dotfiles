@@ -75,6 +75,7 @@ return require('packer').startup(function(use)
 	use 'simrat39/rust-tools.nvim'
 	use 'aserowy/tmux.nvim'
 	use 'nvim-treesitter/nvim-treesitter-context'
+	use 'mfussenegger/nvim-dap'
 	use {
 		'mrcjkb/haskell-tools.nvim',
 		tag = '3.0.2',
