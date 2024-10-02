@@ -9,11 +9,13 @@ return require('packer').startup(function(use)
 	use { 'nvim-telescope/telescope-fzf-native.nvim', run = 'make', cond = vim.fn.executable 'make' == 1 }
 
 	use {
-		'nvim-tree/nvim-tree.lua',
+		"nvim-neo-tree/neo-tree.nvim",
+		branch = "v3.x",
 		requires = {
-			'nvim-tree/nvim-web-devicons',
-		},
-		tag = 'nightly'
+			"nvim-lua/plenary.nvim",
+			"nvim-tree/nvim-web-devicons",
+			"MunifTanjim/nui.nvim",
+		}
 	}
 	use { -- LSP Configuration & Plugins
 		'neovim/nvim-lspconfig',
