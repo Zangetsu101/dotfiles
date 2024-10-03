@@ -15,6 +15,25 @@ return require('packer').startup(function(use)
 			"nvim-lua/plenary.nvim",
 			"nvim-tree/nvim-web-devicons",
 			"MunifTanjim/nui.nvim",
+			{
+				's1n7ax/nvim-window-picker',
+				version = '2.*',
+				config = function()
+					require 'window-picker'.setup({
+						filter_rules = {
+							include_current_win = false,
+							autoselect_one = true,
+							-- filter using buffer options
+							bo = {
+								-- if the file type is one of following, the window will be ignored
+								filetype = { 'neo-tree', "neo-tree-popup", "notify" },
+								-- if the buffer type is one of following, the window will be ignored
+								buftype = { 'terminal', "quickfix" },
+							},
+						},
+					})
+				end,
+			},
 		}
 	}
 	use { -- LSP Configuration & Plugins
@@ -63,10 +82,10 @@ return require('packer').startup(function(use)
 	use 'navarasu/onedark.nvim'
 	use 'tpope/vim-unimpaired'
 	use 'lewis6991/gitsigns.nvim'
-	use 'nvim-lualine/lualine.nvim'          -- Fancier statusline
+	use 'nvim-lualine/lualine.nvim' -- Fancier statusline
 	use 'lukas-reineke/indent-blankline.nvim' -- Add indentation guides even on blank lines
-	use 'numToStr/Comment.nvim'              -- "gc" to comment visual regions/lines
-	use 'tpope/vim-sleuth'                   -- Detect tabstop and shiftwidth automatically
+	use 'numToStr/Comment.nvim' -- "gc" to comment visual regions/lines
+	use 'tpope/vim-sleuth' -- Detect tabstop and shiftwidth automatically
 	use 'b0o/schemastore.nvim'
 	use 'tpope/vim-repeat'
 	use 'tpope/vim-surround'

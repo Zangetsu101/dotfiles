@@ -125,16 +125,11 @@ require("neo-tree").setup({
       ["<2-LeftMouse>"] = "open",
       ["<cr>"] = "open",
       ["<esc>"] = "cancel",   -- close preview or floating neo-tree window
-      ["P"] = { "toggle_preview", config = { use_float = true, use_image_nvim = true } },
+      ["P"] = { "toggle_preview", config = { use_float = true, use_image_nvim = false } },
       -- Read `# Preview Mode` for more information
       ["l"] = "focus_preview",
-      ["S"] = "open_split",
-      ["s"] = "open_vsplit",
-      -- ["S"] = "split_with_window_picker",
-      -- ["s"] = "vsplit_with_window_picker",
-      ["t"] = "open_tabnew",
-      -- ["<cr>"] = "open_drop",
-      -- ["t"] = "open_tab_drop",
+      ["<C-s>"] = "split_with_window_picker",
+      ["<C-v>"] = "vsplit_with_window_picker",
       ["w"] = "open_with_window_picker",
       --["P"] = "toggle_preview", -- enter preview mode, which shows the current node without focusing
       ["C"] = "close_node",
@@ -216,7 +211,7 @@ require("neo-tree").setup({
       mappings = {
         ["<bs>"] = "navigate_up",
         ["."] = "set_root",
-        ["H"] = "toggle_hidden",
+        ["<leader>h"] = "toggle_hidden",
         ["/"] = "fuzzy_finder",
         ["D"] = "fuzzy_finder_directory",
         ["#"] = "fuzzy_sorter",   -- fuzzy sorting using the fzy algorithm
