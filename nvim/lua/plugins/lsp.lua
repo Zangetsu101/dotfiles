@@ -8,10 +8,6 @@ return {
     -- Useful status updates for LSP
     { 'j-hui/fidget.nvim',       opts = {} },
     'hrsh7th/cmp-nvim-lsp',
-
-
-    -- Additional lua configuration, makes nvim stuff amazing
-    'folke/neodev.nvim',
   },
   -- LSP settings.
   --  This function gets run when an LSP connects to a particular buffer.
@@ -135,9 +131,7 @@ return {
         opts.single_file_support = true
       end
     }
-    -- Setup neovim lua configuration
-    require('neodev').setup()
-    --
+
     -- nvim-cmp supports additional completion capabilities, so broadcast that to servers
     local capabilities = vim.lsp.protocol.make_client_capabilities()
     capabilities = require('cmp_nvim_lsp').default_capabilities(capabilities)
