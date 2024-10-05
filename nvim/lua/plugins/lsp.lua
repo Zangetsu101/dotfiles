@@ -65,8 +65,7 @@ return {
       -- Create a command `:Format` local to the LSP buffer
       vim.api.nvim_buf_create_user_command(bufnr, 'Format', function(_)
         vim.lsp.buf.format {
-          async = true,
-          filter = function(client) return client.name ~= 'ts_ls' end
+          async = true
         }
       end, { desc = 'Format current buffer with LSP' })
     end
@@ -116,7 +115,6 @@ return {
           }
         }
       },
-      ts_ls = {},
       lua_ls = {
         Lua = {
           workspace = { checkThirdParty = false },
