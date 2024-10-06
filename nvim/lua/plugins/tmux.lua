@@ -1,12 +1,11 @@
 return {
   'aserowy/tmux.nvim',
   keys = function()
-    local tmux = require('tmux')
     return {
-      { '<C-w>h', tmux.move_left },
-      { '<C-w>j', tmux.move_bottom },
-      { '<C-w>k', tmux.move_top },
-      { '<C-w>l', tmux.move_right },
+      { '<C-w>h', function() require('tmux').move_left() end },
+      { '<C-w>j', function() require('tmux').move_bottom() end },
+      { '<C-w>k', function() require('tmux').move_top() end },
+      { '<C-w>l', function() require('tmux').move_right() end },
     }
   end,
   opts = {
