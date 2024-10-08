@@ -63,7 +63,6 @@ return {
         vim.lsp.buf.format {
           async = true,
           filter = function(client)
-            print(client.name)
             return client.name ~= 'typescript-tools'
           end
         }
