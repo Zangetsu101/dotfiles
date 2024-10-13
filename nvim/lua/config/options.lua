@@ -21,6 +21,9 @@ vim.o.undofile = true
 -- decrease update time
 vim.o.updatetime = 250
 
+-- decrease mapped sequence wait time
+vim.opt.timeoutlen = 300
+
 -- number of spaces used for autoindents
 vim.o.shiftwidth = 2
 
