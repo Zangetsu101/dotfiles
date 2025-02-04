@@ -63,7 +63,7 @@ return {
         vim.lsp.buf.format {
           async = true,
           filter = function(client)
-            return client.name ~= 'typescript-tools'
+            return client.name ~= 'ts_ls'
           end
         }
       end, { desc = 'Format current buffer with LSP' })
@@ -79,6 +79,7 @@ return {
       dockerls = {},
       eslint = {},
       graphql = {},
+      ts_ls = {},
       jsonls = {
         json = {
           schemas = require('schemastore').json.schemas {

@@ -4,6 +4,7 @@ return {
   'b0o/schemastore.nvim',
   'windwp/nvim-ts-autotag',
   'tpope/vim-repeat',
+  'github/copilot.vim',
   {
     'echasnovski/mini.nvim',
     config = function()
@@ -32,11 +33,6 @@ return {
       vim.g.mkdp_filetypes = { "markdown" }
     end,
     ft = { "markdown" },
-  },
-  {
-    "pmizio/typescript-tools.nvim",
-    dependencies = { "nvim-lua/plenary.nvim", "neovim/nvim-lspconfig" },
-    opts = {},
   },
   {
     'mrcjkb/haskell-tools.nvim',
