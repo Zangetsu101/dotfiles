@@ -4,7 +4,7 @@ return {
   main = 'nvim-treesitter.configs', -- Sets main module to use for opts
   opts = {
     ensure_installed = { 'c', 'cpp', 'css', 'dockerfile', 'graphql', 'jsonc', 'lua', 'rust', 'tsx', 'typescript',
-      'vimdoc', 'markdown', 'markdown_inline', 'bash', 'diff', 'html', 'luadoc', 'query', 'vim' },
+      'vimdoc', 'markdown', 'markdown_inline', 'bash', 'diff', 'html', 'luadoc', 'query', 'vim', 'rust-analyzer' },
     autotag = {
       enable = true
     },
