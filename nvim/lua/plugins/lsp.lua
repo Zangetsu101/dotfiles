@@ -105,6 +105,7 @@ return {
       taplo = {},
       ltex = {},
       vimls = {},
+      rust_analyzer = {},
       tailwindcss = {},
       yamlls = {
         json = {
