@@ -4,7 +4,11 @@ return {
   'b0o/schemastore.nvim',
   'windwp/nvim-ts-autotag',
   'tpope/vim-repeat',
-  'github/copilot.vim',
+  {
+    'Exafunction/windsurf.vim',
+    event = 'BufEnter'
+
+  },
   {
     'echasnovski/mini.nvim',
     config = function()
@@ -37,18 +41,21 @@ return {
   {
     'mrcjkb/haskell-tools.nvim',
     version = '^4', -- Recommended
-    lazy = false, -- This plugin is already lazy
+    lazy = false,   -- This plugin is already lazy
   },
   'mfussenegger/nvim-dap',
   {
     'mrcjkb/rustaceanvim',
-    version = '^5', -- Recommended
-    lazy = false, -- This plugin is already lazy
+    version = '^5',   -- Recommended
+    lazy = false,     -- This plugin is already lazy
   },
   'tpope/vim-sleuth', -- Detect tabstop and shiftwidth automatically,
   'tpope/vim-unimpaired',
   'JoosepAlviste/nvim-ts-context-commentstring',
-  { 'andymass/vim-matchup', init = function()
-    vim.g.matchup_matchparen_offscreen = { method = "popup" }
-  end }
+  {
+    'andymass/vim-matchup',
+    init = function()
+      vim.g.matchup_matchparen_offscreen = { method = "popup" }
+    end
+  }
 }
