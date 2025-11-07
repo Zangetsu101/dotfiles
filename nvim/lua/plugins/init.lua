@@ -49,7 +49,7 @@ return {
     version = '^5',   -- Recommended
     lazy = false,     -- This plugin is already lazy
   },
-  'tpope/vim-sleuth', -- Detect tabstop and shiftwidth automatically,
+  'NMAC427/guess-indent.nvim', -- Detect tabstop and shiftwidth automatically
   'tpope/vim-unimpaired',
   'JoosepAlviste/nvim-ts-context-commentstring',
   {
