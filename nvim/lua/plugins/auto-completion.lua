@@ -56,8 +56,8 @@ return { -- Autocompletion
       -- See :h blink-cmp-config-keymap for defining your own keymap
       preset = 'default',
 
-      -- For more advanced Luasnip keymaps (e.g. selecting choice nodes, expansion) see:
-      --    https://github.com/L3MON4D3/LuaSnip?tab=readme-ov-file#keymaps
+      ['<C-p>'] = { 'select_prev', 'fallback' },
+      ['<C-n>'] = { 'select_next', 'fallback' },
     },
 
     appearance = {
@@ -70,6 +70,7 @@ return { -- Autocompletion
       -- By default, you may press `<c-space>` to show the documentation.
       -- Optionally, set `auto_show = true` to show the documentation after a delay.
       documentation = { auto_show = false, auto_show_delay_ms = 500 },
+      menu = { auto_show = false, auto_show_delay_ms = 500 },
     },
 
     sources = {
