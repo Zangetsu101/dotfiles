@@ -13,6 +13,11 @@ return {
       formatters_by_ft = {
         lua = { "stylua" },
         javascript = { "eslint_d", "prettierd", stop_after_first = true },
+        typescript = { "eslint_d", "prettierd", stop_after_first = true },
+        typescriptreact = { "eslint_d", "prettierd", stop_after_first = true },
+        rust = { "rustfmt" },
+        sh = { "shfmt" },
+        sql = { "pg_format" },
       },
       -- Set default options
       default_format_opts = {

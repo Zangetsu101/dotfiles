@@ -205,6 +205,8 @@ return {
       'shfmt', -- Used to format shell scripts
       'eslint_d',
       'prettierd',
+      'rustfmt',
+      'pg_format',
     })
 
     require('mason-tool-installer').setup { ensure_installed = ensure_installed }
@@ -219,9 +221,6 @@ return {
           -- by the server configuration above. Useful when disabling
           -- certain features of an LSP (for example, turning off formatting for ts_ls)
           server.capabilities = vim.tbl_deep_extend('force', {}, capabilities, server.capabilities or {})
-          if server_name == 'eslint' then
-            server.capabilities.documentFormattingProvider = true
-          end
           if server_name == 'ltex' then
             server.filetypes = { 'gitcommit', 'markdown' }
             server.single_file_support = true
