@@ -214,6 +214,9 @@ return {
     require('mason-lspconfig').setup {
       ensure_installed = {}, -- explicitly set to an empty table as we are populating installs via mason-tool-installer
       automatic_installation = false,
+      automatic_enable = {
+        exclude = { "rust_analyzer" }
+      },
       handlers = {
         function(server_name)
           local server = servers[server_name] or {}

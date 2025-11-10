@@ -46,7 +46,7 @@ return {
   'mfussenegger/nvim-dap',
   {
     'mrcjkb/rustaceanvim',
-    version = '^5',   -- Recommended
+    version = '^6',   -- Recommended
     lazy = false,     -- This plugin is already lazy
   },
   'NMAC427/guess-indent.nvim', -- Detect tabstop and shiftwidth automatically
