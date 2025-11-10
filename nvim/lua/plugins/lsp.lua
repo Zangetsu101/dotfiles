@@ -1,15 +1,14 @@
 return {
   'neovim/nvim-lspconfig',
   dependencies = {
-   -- Automatically install LSPs and related tools to stdpath for Neovim
-   -- Mason must be loaded before its dependents so we need to set it up here.
-   -- NOTE: `opts = {}` is the same as calling `require('mason').setup({})`
-  { 'mason-org/mason.nvim', opts = {} },
-  'mason-org/mason-lspconfig.nvim',
-  'WhoIsSethDaniel/mason-tool-installer.nvim',
-  -- Useful status updates for LSP
-  { 'j-hui/fidget.nvim', opts = {} },
-  'saghen/blink.cmp',
+    -- Automatically install LSPs and related tools to stdpath for Neovim
+    -- Mason must be loaded before its dependents so we need to set it up here.
+    -- NOTE: `opts = {}` is the same as calling `require('mason').setup({})`
+    { 'mason-org/mason.nvim', opts = {} },
+    'mason-org/mason-lspconfig.nvim',
+    'WhoIsSethDaniel/mason-tool-installer.nvim',
+    -- Useful status updates for LSP
+    { 'j-hui/fidget.nvim', opts = {} },
   },
   -- This function gets run when an LSP attaches to a particular buffer.
   -- That is to say, every time a new file is opened that is associated with
@@ -98,7 +97,13 @@ return {
             vim.lsp.inlay_hint.enable(not vim.lsp.inlay_hint.is_enabled { bufnr = event.buf })
           end, '[T]oggle Inlay [H]ints')
         end
-      end
+
+        if client and client:supports_method(vim.lsp.protocol.Methods.textDocument_inlineCompletion, event.buf) then
+          vim.lsp.inline_completion.enable(true, { bufnr = event.buf })
+          map('<C-F>', vim.lsp.inline_completion.get, 'Accept Inline Completion', 'i')
+          map('<C-G>', vim.lsp.inline_completion.select, 'Switch Inline Completion', 'i')
+        end
+      end,
     })
 
     -- Diagnostic Config
@@ -107,7 +112,7 @@ return {
       severity_sort = true,
       float = { border = 'rounded', source = 'if_many' },
       underline = { severity = vim.diagnostic.severity.ERROR },
-      signs = vim.g.have_nerd_font and {
+      signs = {
         text = {
           [vim.diagnostic.severity.ERROR] = '󰅚 ',
           [vim.diagnostic.severity.WARN] = '󰀪 ',
@@ -130,12 +135,6 @@ return {
       },
     }
 
-    -- LSP servers and clients are able to communicate to each other what features they support.
-    --  By default, Neovim doesn't support everything that is in the LSP specification.
-    --  When you add blink.cmp, luasnip, etc. Neovim now has *more* capabilities.
-    --  So, we create new capabilities with blink.cmp, and then broadcast that to the servers.
-    local capabilities = require('blink.cmp').get_lsp_capabilities()
-
     -- Enable the following language servers
     --  Feel free to add/remove any LSPs that you want here. They will automatically be installed.
     --
@@ -143,6 +142,7 @@ return {
     --  the `settings` field of the server config. You must look up that documentation yourself.
     local servers = {
       clangd = {},
+      copilot = {},
       dockerls = {},
       eslint = {},
       graphql = {},
@@ -156,18 +156,18 @@ return {
               'package.json',
               'prettierrc.json',
               'tsconfig.json',
-              'tslint.json'
+              'tslint.json',
             },
             replace = {
               ['tsconfig.json'] = {
                 description = 'JSON schema for typescript configuration files',
                 fileMatch = { 'tsconfig*.json' },
                 name = 'tsconfig.json',
-                url = 'https://json.schemastore.org/tsconfig.json'
-              }
-            }
-          }
-        }
+                url = 'https://json.schemastore.org/tsconfig.json',
+              },
+            },
+          },
+        },
       },
       taplo = {},
       ltex = {},
@@ -178,10 +178,10 @@ return {
         json = {
           schemas = require('schemastore').json.schemas {
             select = {
-              'docker-compose.yml'
-            }
-          }
-        }
+              'docker-compose.yml',
+            },
+          },
+        },
       },
       lua_ls = {
         -- cmd = { ... },
@@ -215,21 +215,7 @@ return {
       ensure_installed = {}, -- explicitly set to an empty table as we are populating installs via mason-tool-installer
       automatic_installation = false,
       automatic_enable = {
-        exclude = { "rust_analyzer" }
-      },
-      handlers = {
-        function(server_name)
-          local server = servers[server_name] or {}
-          -- This handles overriding only values explicitly passed
-          -- by the server configuration above. Useful when disabling
-          -- certain features of an LSP (for example, turning off formatting for ts_ls)
-          server.capabilities = vim.tbl_deep_extend('force', {}, capabilities, server.capabilities or {})
-          if server_name == 'ltex' then
-            server.filetypes = { 'gitcommit', 'markdown' }
-            server.single_file_support = true
-          end
-          require('lspconfig')[server_name].setup(server)
-        end,
+        exclude = { 'rust_analyzer' },
       },
     }
   end,
