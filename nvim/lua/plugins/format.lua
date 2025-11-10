@@ -17,7 +17,7 @@ return {
         typescriptreact = { "eslint_d", "prettierd", stop_after_first = true },
         rust = { "rustfmt" },
         sh = { "shfmt" },
-        sql = { "pgformatter" },
+        sql = { "pg_format" },
       },
       -- Set default options
       default_format_opts = {
@@ -27,6 +27,9 @@ return {
       formatters = {
         shfmt = {
           append_args = { "-i", "2" },
+        },
+        pg_format = {
+          append_args = { "--spaces", "2", "--no-space-function" },
         },
       },
     }
