@@ -206,7 +206,7 @@ return {
       'eslint_d',
       'prettierd',
       'rustfmt',
-      'pg_format',
+      'pgformatter',
     })
 
     require('mason-tool-installer').setup { ensure_installed = ensure_installed }

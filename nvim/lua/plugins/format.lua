@@ -17,7 +17,7 @@ return {
         typescriptreact = { "eslint_d", "prettierd", stop_after_first = true },
         rust = { "rustfmt" },
         sh = { "shfmt" },
-        sql = { "pg_format" },
+        sql = { "pgformatter" },
       },
       -- Set default options
       default_format_opts = {
