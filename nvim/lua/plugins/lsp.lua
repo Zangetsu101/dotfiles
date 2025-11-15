@@ -121,79 +121,30 @@ return {
       },
     }
 
-    -- Enable the following language servers
-    --  Feel free to add/remove any LSPs that you want here. They will automatically be installed.
-    --
-    --  Add any additional override configuration in the following tables. They will be passed to
-    --  the `settings` field of the server config. You must look up that documentation yourself.
-    local servers = {
-      clangd = {},
-      copilot = {},
-      dockerls = {},
-      eslint = {},
-      graphql = {},
-      ts_ls = {},
-      jsonls = {
-        json = {
-          schemas = require('schemastore').json.schemas {
-            select = {
-              '.eslintrc',
-              'lerna.json',
-              'package.json',
-              'prettierrc.json',
-              'tsconfig.json',
-              'tslint.json',
-            },
-            replace = {
-              ['tsconfig.json'] = {
-                description = 'JSON schema for typescript configuration files',
-                fileMatch = { 'tsconfig*.json' },
-                name = 'tsconfig.json',
-                url = 'https://json.schemastore.org/tsconfig.json',
-              },
-            },
-          },
-        },
-      },
-      taplo = {},
-      ltex = {},
-      vimls = {},
-      rust_analyzer = {},
-      tailwindcss = {},
-      yamlls = {
-        json = {
-          schemas = require('schemastore').json.schemas {
-            select = {
-              'docker-compose.yml',
-            },
-          },
-        },
-      },
-      lua_ls = {
-        -- cmd = { ... },
-        -- filetypes = { ... },
-        -- capabilities = {},
-        settings = {
-          Lua = {
-            completion = {
-              callSnippet = 'Replace',
-            },
-            -- You can toggle below to ignore Lua_LS's noisy `missing-fields` warnings
-            -- diagnostics = { disable = { 'missing-fields' } },
-          },
-        },
-      },
-    }
-
-    local ensure_installed = vim.tbl_keys(servers)
-    vim.list_extend(ensure_installed, {
+    -- Install the following language servers
+    local ensure_installed = {
+      'clangd',
+      'copilot',
+      'dockerls',
+      'eslint',
+      'graphql',
+      'ts_ls',
+      'jsonls',
+      'taplo',
+      'ltex',
+      'vimls',
+      'rust_analyzer',
+      'tailwindcss',
+      'yamlls',
+      'lua_ls',
+      -- formatters and linters
       'stylua', -- Used to format Lua code
       'shfmt', -- Used to format shell scripts
       'eslint_d',
       'prettierd',
       'rustfmt',
       'pgformatter',
-    })
+    }
 
     require('mason-tool-installer').setup { ensure_installed = ensure_installed }
 
