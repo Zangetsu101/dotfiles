@@ -8,8 +8,3 @@ vim.api.nvim_create_autocmd('TextYankPost', {
     vim.hl.on_yank()
   end,
 })
-
-vim.api.nvim_create_autocmd("FileType", {
-  pattern = "rust",
-  command = 'let g:surround_124 = "|\r|"'
-})
