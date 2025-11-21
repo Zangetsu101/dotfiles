@@ -140,6 +140,7 @@ return {
       'dockerls',
       'eslint',
       'graphql',
+      'ts_ls',
       'jsonls',
       'taplo',
       'ltex',

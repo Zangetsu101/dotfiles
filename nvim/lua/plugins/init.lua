@@ -19,42 +19,31 @@ return {
           end,
         },
       }
-    end,
+    end
   },
   { -- Additional text objects via treesitter
     'nvim-treesitter/nvim-treesitter-textobjects',
     dependencies = 'nvim-treesitter',
   },
   {
-    'iamcco/markdown-preview.nvim',
-    cmd = { 'MarkdownPreviewToggle', 'MarkdownPreview', 'MarkdownPreviewStop' },
-    build = 'cd app && yarn install',
+    "iamcco/markdown-preview.nvim",
+    cmd = { "MarkdownPreviewToggle", "MarkdownPreview", "MarkdownPreviewStop" },
+    build = "cd app && yarn install",
     init = function()
-      vim.g.mkdp_filetypes = { 'markdown' }
+      vim.g.mkdp_filetypes = { "markdown" }
     end,
-    ft = { 'markdown' },
+    ft = { "markdown" },
   },
   {
     'mrcjkb/haskell-tools.nvim',
     version = '^4', -- Recommended
-    lazy = false, -- This plugin is already lazy
+    lazy = false,   -- This plugin is already lazy
   },
   'mfussenegger/nvim-dap',
   {
     'mrcjkb/rustaceanvim',
-    version = '^6', -- Recommended
-    lazy = false, -- This plugin is already lazy
-  },
-  {
-    'pmizio/typescript-tools.nvim',
-    dependencies = { 'nvim-lua/plenary.nvim', 'neovim/nvim-lspconfig' },
-    opts = {
-      settings = {
-        tsserver_file_preferences = {
-          includeInlayParameterNameHints = 'all',
-        },
-      },
-    },
+    version = '^6',   -- Recommended
+    lazy = false,     -- This plugin is already lazy
   },
   'NMAC427/guess-indent.nvim', -- Detect tabstop and shiftwidth automatically
   'tpope/vim-unimpaired',
@@ -62,7 +51,7 @@ return {
   {
     'andymass/vim-matchup',
     init = function()
-      vim.g.matchup_matchparen_offscreen = { method = 'popup' }
-    end,
-  },
+      vim.g.matchup_matchparen_offscreen = { method = "popup" }
+    end
+  }
 }
