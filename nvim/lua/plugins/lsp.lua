@@ -135,6 +135,7 @@ return {
 
     -- Install the following language servers
     local ensure_installed = {
+      'bashls',
       'clangd',
       'copilot',
       'dockerls',
@@ -143,7 +144,7 @@ return {
       'ts_ls',
       'jsonls',
       'taplo',
-      'ltex',
+      'ltex-ls-plus',
       'vimls',
       'rust_analyzer',
       'tailwindcss',
