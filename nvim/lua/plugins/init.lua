@@ -1,5 +1,6 @@
 return {
   'tpope/vim-fugitive',
+  'tpope/vim-abolish',
   'tpope/vim-rhubarb',
   'b0o/schemastore.nvim',
   'windwp/nvim-ts-autotag',
