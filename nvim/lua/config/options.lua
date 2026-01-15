@@ -70,4 +70,4 @@ vim.g.loaded_netrw = 1
 vim.g.loaded_netrwPlugin = 1
 
 -- Show menu even when there is only one match
-vim.o.completeopt = 'menuone,preview'
+vim.o.completeopt = 'menuone,popup'
