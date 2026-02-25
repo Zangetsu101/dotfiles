@@ -153,7 +153,6 @@ return {
       -- formatters and linters
       'stylua', -- Used to format Lua code
       'shfmt', -- Used to format shell scripts
-      'eslint_d',
       'prettierd',
       'rustfmt',
       'pgformatter',

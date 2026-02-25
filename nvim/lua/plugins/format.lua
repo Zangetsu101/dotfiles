@@ -10,9 +10,9 @@ return {
 
     local formatters_by_ft = {
       lua = { 'stylua' },
-      javascript = { 'eslint_d', 'prettierd', stop_after_first = true },
-      typescript = { 'eslint_d', 'prettierd', stop_after_first = true },
-      typescriptreact = { 'eslint_d', 'prettierd', stop_after_first = true },
+      javascript = { 'prettierd' },
+      typescript = { 'prettierd' },
+      typescriptreact = { 'prettierd' },
       rust = { 'rustfmt' },
       sh = { 'shfmt' },
       sql = { 'pg_format' },
