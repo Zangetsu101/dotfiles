@@ -60,7 +60,7 @@ return {
         local client = assert(vim.lsp.get_client_by_id(event.data.client_id))
 
         if client:supports_method 'textDocument/completion' then
-          vim.lsp.completion.enable(true, client.id, event.buf)
+          vim.lsp.completion.enable(true, client.id, event.buf, { autotrigger = true })
         end
 
         if client:supports_method(vim.lsp.protocol.Methods.textDocument_documentHighlight, event.buf) then
@@ -154,6 +154,7 @@ return {
       'stylua', -- Used to format Lua code
       'shfmt', -- Used to format shell scripts
       'prettierd',
+      'prismals',
       'rustfmt',
       'pgformatter',
     }
