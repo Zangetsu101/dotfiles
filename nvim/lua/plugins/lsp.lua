@@ -155,7 +155,6 @@ return {
       'shfmt', -- Used to format shell scripts
       'prettierd',
       'prismals',
-      'rustfmt',
       'pgformatter',
     }
 
