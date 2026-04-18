@@ -3,7 +3,7 @@
 | Config                | Path                       |
 | --------------------- | -------------------------- |
 | Neovim                | `nvim/`                    |
-| tmux                  | `tmux/tmux.conf`           |
+| tmux                  | `tmux/`                    |
 | Alacritty             | `alacritty/alacritty.toml` |
 | Starship              | `starship/starship.toml`   |
 | Git                   | `git/config`               |
@@ -15,7 +15,7 @@
 Symlink each config to where the tool expects it:
 
 ```sh
-ln -s ~/.dotfiles/tmux/tmux.conf ~/.tmux.conf
+ln -s ~/.dotfiles/tmux ~/.config/tmux
 ln -s ~/.dotfiles/nvim ~/.config/nvim
 ln -s ~/.dotfiles/starship/starship.toml ~/.config/starship.toml
 ln -s ~/.dotfiles/git/config ~/.gitconfig
