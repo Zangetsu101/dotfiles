@@ -19,7 +19,7 @@ ln -s ~/.dotfiles/tmux ~/.config/tmux
 ln -s ~/.dotfiles/nvim ~/.config/nvim
 ln -s ~/.dotfiles/starship/starship.toml ~/.config/starship.toml
 ln -s ~/.dotfiles/git/config ~/.gitconfig
-ln -s ~/.dotfiles/claude/settings.json ~/.claude/settings.json
+ln -s ~/.dotfiles/claude/* ~/.claude/
 ln -s ~/.dotfiles/agents/skills ~/.claude/skills
 ```
 
