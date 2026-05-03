@@ -140,6 +140,7 @@ return {
       'copilot',
       'dockerls',
       'eslint',
+      'ktlint',
       'graphql',
       'ts_ls',
       'jsonls',

@@ -13,6 +13,7 @@ return {
       javascript = { 'prettierd' },
       typescript = { 'prettierd' },
       typescriptreact = { 'prettierd' },
+      kotlin = { 'ktlint' },
       rust = { 'rustfmt' },
       sh = { 'shfmt' },
       sql = { 'pg_format' },
