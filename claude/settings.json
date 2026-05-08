@@ -32,8 +32,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/prettier-formatter.sh",
+            "command": "~/.claude/hooks/prettier-queue.sh",
             "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/prettier-flush.sh"
           }
         ]
       }
