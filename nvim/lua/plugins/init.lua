@@ -2,6 +2,7 @@ return {
   'tpope/vim-fugitive',
   'tpope/vim-abolish',
   'tpope/vim-rhubarb',
+  'sindrets/diffview.nvim',
   'b0o/schemastore.nvim',
   'windwp/nvim-ts-autotag',
   'tpope/vim-repeat',
