@@ -5,6 +5,7 @@
     "frontend-design@claude-plugins-official": true
   },
   "editorMode": "vim",
+  "model": "sonnet",
   "hooks": {
     "PreToolUse": [
       {
@@ -47,6 +48,34 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/home/tameem/.nvm/versions/node/v22.15.1/bin/node\" \"/home/tameem/.claude/hooks/caveman-activate.js\"",
+            "timeout": 5,
+            "statusMessage": "Loading caveman mode..."
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/home/tameem/.nvm/versions/node/v22.15.1/bin/node\" \"/home/tameem/.claude/hooks/caveman-mode-tracker.js\"",
+            "timeout": 5,
+            "statusMessage": "Tracking caveman mode..."
+          }
+        ]
+      }
     ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "bash \"/home/tameem/.claude/hooks/caveman-statusline.sh\""
   }
 }
