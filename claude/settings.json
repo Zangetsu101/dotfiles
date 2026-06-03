@@ -1,10 +1,4 @@
 {
-  "skipDangerousModePermissionPrompt": true,
-  "enabledPlugins": {
-    "typescript-lsp@claude-plugins-official": true,
-    "frontend-design@claude-plugins-official": true
-  },
-  "editorMode": "vim",
   "model": "sonnet",
   "hooks": {
     "PreToolUse": [
@@ -77,5 +71,11 @@
   "statusLine": {
     "type": "command",
     "command": "bash \"/home/tameem/.claude/hooks/caveman-statusline.sh\""
-  }
+  },
+  "enabledPlugins": {
+    "typescript-lsp@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true
+  },
+  "skipDangerousModePermissionPrompt": true,
+  "editorMode": "vim"
 }

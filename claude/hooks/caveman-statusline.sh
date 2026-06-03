@@ -80,4 +80,20 @@ if [ -n "$SEVEN_DAY" ]; then
   [ -n "$RATE_OUT" ] && RATE_OUT="$RATE_OUT "
   RATE_OUT="${RATE_OUT}7d:$(printf '%.0f' "$SEVEN_DAY")%"
 fi
+
+FIVE_HR_RESET=$(printf '%s' "$INPUT" | jq -r '.rate_limits.five_hour.resets_at // empty' 2>/dev/null)
+NOW=$(date +%s)
+
+if [ -n "$FIVE_HR_RESET" ] && [ "$FIVE_HR_RESET" -gt "$NOW" ] 2>/dev/null; then
+  SECS_LEFT=$(( FIVE_HR_RESET - NOW ))
+  H=$(( SECS_LEFT / 3600 ))
+  M=$(( (SECS_LEFT % 3600) / 60 ))
+  if [ "$H" -gt 0 ]; then
+    TIME_LEFT="${H}h${M}m"
+  else
+    TIME_LEFT="${M}m"
+  fi
+  [ -n "$RATE_OUT" ] && RATE_OUT="$RATE_OUT "
+  RATE_OUT="${RATE_OUT}(${TIME_LEFT})"
+fi
 [ -n "$RATE_OUT" ] && printf ' \033[0;36m[%s]\033[0m' "$RATE_OUT"
