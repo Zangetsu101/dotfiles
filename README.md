@@ -6,7 +6,7 @@
 | tmux                  | `tmux/`                    |
 | Alacritty             | `alacritty/alacritty.toml` |
 | Starship              | `starship/starship.toml`   |
-| Git                   | `git/config`               |
+| Git                   | `git/.gitconfig`           |
 | Claude Code           | `claude/`                  |
 | Pi                    | `pi/agent/`                |
 | Agent-agnostic skills | `agents/`                  |
@@ -19,7 +19,8 @@ Symlink each config to where the tool expects it:
 ln -s ~/.dotfiles/tmux ~/.config/tmux
 ln -s ~/.dotfiles/nvim ~/.config/nvim
 ln -s ~/.dotfiles/starship/starship.toml ~/.config/starship.toml
-ln -s ~/.dotfiles/git/config ~/.gitconfig
+ln -s ~/.dotfiles/git/.gitconfig ~/.gitconfig
+ln -s ~/.dotfiles/claude/* ~/.claude/
 ln -s ~/.dotfiles/pi/agent/settings.json ~/.pi/agent/settings.json
 ln -s ~/.dotfiles/pi/agent/keybindings.json ~/.pi/agent/keybindings.json
 ln -s ~/.dotfiles/pi/agent/extensions ~/.pi/agent/extensions
