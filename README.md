@@ -20,6 +20,7 @@ ln -s ~/.dotfiles/nvim ~/.config/nvim
 ln -s ~/.dotfiles/starship/starship.toml ~/.config/starship.toml
 ln -s ~/.dotfiles/git/config ~/.gitconfig
 ln -s ~/.dotfiles/claude/* ~/.claude/
+ln -s ~/.dotfiles/agents ~/.agents
 ln -s ~/.dotfiles/agents/skills ~/.claude/skills
 ```
 

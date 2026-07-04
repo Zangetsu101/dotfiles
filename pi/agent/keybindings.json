@@ -1,0 +1,10 @@
+{
+  "tui.select.up": ["up", "ctrl+p"],
+  "tui.select.down": ["down", "ctrl+n"],
+  "tui.select.pageUp": ["pageUp", "ctrl+u"],
+  "tui.select.pageDown": ["pageDown", "ctrl+d"],
+  "tui.select.confirm": ["enter"],
+  "tui.select.cancel": ["escape", "ctrl+c"],
+  "app.model.cycleForward": ["alt+n"],
+  "app.model.cycleBackward": ["alt+p"]
+}
