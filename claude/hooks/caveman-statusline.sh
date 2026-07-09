@@ -50,6 +50,10 @@ if [ ! -L "$FLAG" ] && [ -f "$FLAG" ]; then
   esac
 fi
 
+# Currently selected model
+MODEL=$(printf '%s' "$INPUT" | jq -r '.model.display_name // .model.id // empty' 2>/dev/null | tr -d '\000-\037')
+[ -n "$MODEL" ] && printf ' \033[38;5;141m%s\033[0m' "$MODEL"
+
 # Context window and session usage
 USED_PCT=$(printf '%s' "$INPUT" | jq -r '.context_window.used_percentage // empty' 2>/dev/null)
 TOTAL=$(printf '%s' "$INPUT" | jq -r '.context_window.context_window_size // empty' 2>/dev/null)
