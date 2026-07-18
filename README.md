@@ -9,7 +9,7 @@
 | Git                   | `git/.gitconfig`           |
 | Claude Code           | `claude/`                  |
 | Pi                    | `pi/agent/`                |
-| Agent-agnostic skills | `agents/`                  |
+| Agent-agnostic config | `agents/`                  |
 
 ## Setup
 
