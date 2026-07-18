@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "tsc --noEmit"
+    "check": "node scripts/sync-pi-dependencies.mjs --check && tsc --noEmit",
+    "sync:pi": "node scripts/sync-pi-dependencies.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.80.9",
