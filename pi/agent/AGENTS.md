@@ -1,1 +1,1 @@
-- Long-running commands: use `background_monitor` when completion requires follow-up; never watch or poll via `bash`.
+- Long-running commands: use `background_monitor` when completion requires follow-up.

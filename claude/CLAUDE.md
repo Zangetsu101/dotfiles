@@ -3,13 +3,12 @@
 ## Model selection (subagents & workflows)
 
 | Rung   | Use for                                                              | How                                                                 |
-| ------ | -------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| sonnet | mechanical: grep sweeps, listing, extraction, lint, transforms       | `model: 'sonnet', effort: 'low'`                                    |
-| opus   | implementation, code reading, standard research, **anything unsure** | `model: 'opus'`                                                     |
-| top    | judge, adversarial verify, synthesis, architecture                   | omit `model` (inherits session); `effort: 'high'` on hardest stages |
+| ------ | -------------------------------------------------------------------- | ----------------- |
+| sonnet | mechanical: grep sweeps, listing, extraction, lint, transforms       | `model: 'sonnet'` |
+| opus   | implementation, code reading, standard research, **anything unsure** | `model: 'opus'`   |
+| top    | judge, adversarial verify, synthesis, architecture                   | omit `model`      |
 
-- `high` = effort ceiling; never xhigh/max unless I ask.
-- Effort lever exists only in Workflow `agent()`; Agent tool + agent frontmatter: model only.
+- `high` = effort ceiling.
 
 ## Agent worktrees
 
