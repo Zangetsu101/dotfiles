@@ -1,0 +1,102 @@
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { Type } from "typebox"
+
+const MAX_OUTPUT_CHARS = 50_000
+
+type Monitor = {
+  child: ChildProcessWithoutNullStreams
+  label: string
+}
+
+function appendTail(current: string, chunk: Buffer): string {
+  const next = current + chunk.toString("utf8")
+  return next.length <= MAX_OUTPUT_CHARS ? next : next.slice(-MAX_OUTPUT_CHARS)
+}
+
+export default function (pi: ExtensionAPI) {
+  const monitors = new Map<number, Monitor>()
+  let nextId = 1
+  let shuttingDown = false
+
+  pi.registerTool({
+    name: "background_monitor",
+    label: "Background monitor",
+    description:
+      "Run a long-lived shell command in the background. When it exits, notify the user and wake the agent with its exit status and output.",
+    promptSnippet: "Run background commands whose completion the agent must react to",
+    promptGuidelines: [
+      "Use background_monitor instead of nohup or shell '&' when the agent must react automatically after a background command finishes.",
+    ],
+    parameters: Type.Object({
+      command: Type.String({ description: "Shell command to monitor until it exits" }),
+      label: Type.Optional(Type.String({ description: "Short description shown on completion" })),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const id = nextId++
+      const label = params.label?.trim() || params.command
+      const child = spawn("/bin/bash", ["-lc", params.command], {
+        cwd: ctx.cwd,
+        env: process.env,
+        detached: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      }) as ChildProcessWithoutNullStreams
+
+      let output = ""
+      let finished = false
+      child.stdout.on("data", (chunk: Buffer) => {
+        output = appendTail(output, chunk)
+      })
+      child.stderr.on("data", (chunk: Buffer) => {
+        output = appendTail(output, chunk)
+      })
+
+      const finish = (status: string, failed: boolean) => {
+        if (finished) return
+        finished = true
+        monitors.delete(id)
+        if (shuttingDown) return
+
+        const summary = `Background monitor #${id} (${label}) ${status}.`
+        if (ctx.hasUI) ctx.ui.notify(summary, failed ? "error" : "info")
+
+        pi.sendMessage(
+          {
+            customType: "background-monitor",
+            content: `${summary}\n\nOutput:\n${output.trim() || "(no output)"}\n\nReview the result and report it to the user.`,
+            display: true,
+          },
+          { deliverAs: "followUp", triggerTurn: true },
+        )
+      }
+
+      child.once("error", (error) => finish(`failed to start: ${error.message}`, true))
+      child.once("close", (code, signal) => {
+        const status = signal ? `was terminated by ${signal}` : `finished with exit code ${code ?? "unknown"}`
+        finish(status, code !== 0 || signal !== null)
+      })
+
+      monitors.set(id, { child, label })
+
+      return {
+        content: [{ type: "text", text: `Started background monitor #${id}: ${label}` }],
+        details: { id, pid: child.pid, label },
+      }
+    },
+  })
+
+  pi.on("session_shutdown", () => {
+    shuttingDown = true
+    for (const { child } of monitors.values()) {
+      if (child.pid) {
+        try {
+          process.kill(-child.pid, "SIGTERM")
+        } catch {
+          // Process already exited.
+        }
+      }
+    }
+    monitors.clear()
+  })
+}
