@@ -5,8 +5,21 @@ import { fileURLToPath } from "node:url"
 
 const PI_PACKAGE = "@earendil-works/pi-coding-agent"
 const agentDir = dirname(dirname(fileURLToPath(import.meta.url)))
+
+// npm lifecycle scripts set these to the local project, which makes a nested
+// `npm root --global` incorrectly resolve to <project>/lib/node_modules.
+const globalNpmEnv = { ...process.env }
+for (const name of [
+  "npm_config_prefix",
+  "npm_config_global_prefix",
+  "npm_config_globalconfig",
+  "npm_config_local_prefix",
+]) {
+  delete globalNpmEnv[name]
+}
 const globalModulesDir = execFileSync("npm", ["root", "--global"], {
   encoding: "utf8",
+  env: globalNpmEnv,
 }).trim()
 
 function readPackage(path) {
