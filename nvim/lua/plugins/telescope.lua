@@ -80,6 +80,7 @@ return {
     vim.keymap.set('n', '<leader>sf', function() builtin.find_files({ hidden = true }) end,
       { desc = '[S]earch [F]iles' })
     vim.keymap.set('n', '<leader>sh', builtin.help_tags, { desc = '[S]earch [H]elp' })
+    vim.keymap.set('n', '<leader>ss', builtin.lsp_document_symbols, { desc = '[S]earch [S]ymbols' })
     vim.keymap.set('n', '<leader>sw', builtin.grep_string, { desc = '[S]earch current [W]ord' })
     vim.keymap.set('v', '<leader>sw', search_vtext, { desc = '[S]earch selection' })
     vim.keymap.set('n', '<leader>sg', function() builtin.live_grep({ hidden = true }) end,
