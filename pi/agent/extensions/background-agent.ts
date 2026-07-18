@@ -6,6 +6,11 @@ import { promisify } from "node:util"
 import { watch, type FSWatcher } from "node:fs"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
+import {
+  BACKGROUND_ACTIVITY_FINISHED,
+  BACKGROUND_ACTIVITY_STARTED,
+  type BackgroundActivity,
+} from "./lib/background-activity.ts"
 
 const execFileAsync = promisify(execFile)
 const STATUS_FILE_ENV = "PI_BACKGROUND_AGENT_STATUS_FILE"
@@ -128,10 +133,21 @@ async function listAgents(): Promise<AgentSession[]> {
 }
 
 async function registerChildBridge(pi: ExtensionAPI, statusFile: string): Promise<void> {
+  const activeBackgroundActivities = new Set<string>()
   let reported = false
 
+  pi.events.on(BACKGROUND_ACTIVITY_STARTED, (data) => {
+    const activity = data as BackgroundActivity
+    if (activity?.id) activeBackgroundActivities.add(activity.id)
+  })
+
+  pi.events.on(BACKGROUND_ACTIVITY_FINISHED, (data) => {
+    const activity = data as BackgroundActivity
+    if (activity?.id) activeBackgroundActivities.delete(activity.id)
+  })
+
   pi.on("agent_settled", async (_event, ctx) => {
-    if (reported) return
+    if (reported || activeBackgroundActivities.size > 0) return
     reported = true
     const result = finalAssistantOutput(ctx)
     await writeCompletion(statusFile, {

@@ -1,6 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
+import {
+  BACKGROUND_ACTIVITY_FINISHED,
+  BACKGROUND_ACTIVITY_STARTED,
+  type BackgroundActivity,
+} from "./lib/background-activity.ts"
 
 const MAX_OUTPUT_CHARS = 50_000
 
@@ -36,6 +41,11 @@ export default function (pi: ExtensionAPI) {
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const id = nextId++
       const label = params.label?.trim() || params.command
+      const activity: BackgroundActivity = {
+        id: `background-monitor:${id}`,
+        source: "background_monitor",
+        label,
+      }
       const child = spawn("/bin/bash", ["-lc", params.command], {
         cwd: ctx.cwd,
         env: process.env,
@@ -56,6 +66,7 @@ export default function (pi: ExtensionAPI) {
         if (finished) return
         finished = true
         monitors.delete(id)
+        pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
         if (shuttingDown) return
 
         const summary = `Background monitor #${id} (${label}) ${status}.`
@@ -78,6 +89,7 @@ export default function (pi: ExtensionAPI) {
       })
 
       monitors.set(id, { child, label })
+      pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
 
       return {
         content: [{ type: "text", text: `Started background monitor #${id}: ${label}` }],
