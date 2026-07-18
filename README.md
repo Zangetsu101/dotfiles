@@ -20,9 +20,7 @@ ln -s ~/.dotfiles/tmux ~/.config/tmux
 ln -s ~/.dotfiles/nvim ~/.config/nvim
 ln -s ~/.dotfiles/starship/starship.toml ~/.config/starship.toml
 ln -s ~/.dotfiles/git/.gitconfig ~/.gitconfig
-ln -s ~/.dotfiles/pi/agent/settings.json ~/.pi/agent/settings.json
-ln -s ~/.dotfiles/pi/agent/keybindings.json ~/.pi/agent/keybindings.json
-ln -s ~/.dotfiles/pi/agent/extensions ~/.pi/agent/extensions
+ln -s ~/.dotfiles/pi/agent/* ~/.pi/agent/
 ln -s ~/.dotfiles/claude/* ~/.claude/
 ln -s ~/.dotfiles/agents ~/.agents
 ln -s ~/.dotfiles/agents/skills ~/.claude/skills
