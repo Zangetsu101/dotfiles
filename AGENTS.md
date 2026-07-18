@@ -1,0 +1,1 @@
+- After changing `pi/agent/extensions/`, run `npm --prefix pi/agent run check`.

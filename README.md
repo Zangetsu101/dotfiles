@@ -24,6 +24,7 @@ ln -s ~/.dotfiles/pi/agent/* ~/.pi/agent/
 ln -s ~/.dotfiles/claude/* ~/.claude/
 ln -s ~/.dotfiles/agents ~/.agents
 ln -s ~/.dotfiles/agents/skills ~/.claude/skills
+npm --prefix ~/.dotfiles/pi/agent install
 ```
 
 > `claude/skills` is itself a symlink to `agents/skills/`, so Claude Code and any other agent can share the same skills.

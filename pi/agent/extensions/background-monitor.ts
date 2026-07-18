@@ -1,11 +1,11 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
+import { spawn, type ChildProcess } from "node:child_process"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 
 const MAX_OUTPUT_CHARS = 50_000
 
 type Monitor = {
-  child: ChildProcessWithoutNullStreams
+  child: ChildProcess
   label: string
 }
 
@@ -41,7 +41,7 @@ export default function (pi: ExtensionAPI) {
         env: process.env,
         detached: true,
         stdio: ["ignore", "pipe", "pipe"],
-      }) as ChildProcessWithoutNullStreams
+      })
 
       let output = ""
       let finished = false
