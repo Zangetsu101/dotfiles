@@ -1,4 +1,5 @@
 - When reporting information to me, be extremely concise and sacrifice grammar for the sake of conciseness.
+- Before adding or updating GitHub Actions, look up each action's latest stable release/tag; never rely on remembered versions.
 
 ## Model selection (subagents & workflows)
 
