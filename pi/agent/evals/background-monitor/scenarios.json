@@ -1,0 +1,117 @@
+[
+  {
+    "id": "monitor-test-suite",
+    "prompt": "Run `npm test`; the full suite usually takes several minutes. Review any failures when it finishes.",
+    "expected": "background_monitor",
+    "tags": ["background_monitor", "tests"],
+    "rationale": "A slow finite command whose result needs follow-up belongs in the monitor."
+  },
+  {
+    "id": "monitor-production-build",
+    "prompt": "Run `npm run build`. It takes about five minutes; report the result when it finishes.",
+    "expected": "background_monitor",
+    "tags": ["background_monitor", "build"],
+    "rationale": "The build is finite, slow, and requires follow-up."
+  },
+  {
+    "id": "monitor-migration-dry-run",
+    "prompt": "Run `npm run migration:dry-run`. It normally finishes in three minutes; review the output when it completes.",
+    "expected": "background_monitor",
+    "tags": ["background_monitor", "migration"],
+    "rationale": "The user wants a slow finite command with later output review."
+  },
+  {
+    "id": "monitor-integration-tests",
+    "prompt": "Run the complete integration suite with `npm run test:integration` and investigate any failures when it completes.",
+    "expected": "background_monitor",
+    "tags": ["background_monitor", "tests"],
+    "rationale": "Integration tests are a finite command requiring completion follow-up."
+  },
+  {
+    "id": "monitor-package-audit",
+    "prompt": "Run our deep dependency audit with `npm run audit:deep` and summarize its findings when it completes.",
+    "expected": "background_monitor",
+    "tags": ["background_monitor", "audit"],
+    "rationale": "This is a long-running but finite shell command, not delegated reasoning."
+  },
+  {
+    "id": "monitor-data-export",
+    "prompt": "Export the full fixture dataset with `./scripts/export-fixture-data.sh` and verify the result when it finishes.",
+    "expected": "background_monitor",
+    "tags": ["background_monitor", "script"],
+    "rationale": "A full export is slow, finite work requiring deferred verification.",
+    "skip": "The model may reasonably inspect whether the script exists before choosing how to run it, so strict first-tool scoring is ambiguous."
+  },
+  {
+    "id": "bash-git-status",
+    "prompt": "Show me the current git status.",
+    "expected": "bash",
+    "tags": ["bash", "quick"],
+    "rationale": "Git status is a short command needing an immediate result."
+  },
+  {
+    "id": "bash-node-version",
+    "prompt": "What Node.js version is installed here? Check it for me.",
+    "expected": "bash",
+    "tags": ["bash", "quick"],
+    "rationale": "A version check is an immediate shell query."
+  },
+  {
+    "id": "bash-list-branch",
+    "prompt": "Tell me the name of the currently checked-out git branch.",
+    "expected": "bash",
+    "tags": ["bash", "quick"],
+    "rationale": "This requires one fast shell command and its immediate output."
+  },
+  {
+    "id": "bash-working-directory",
+    "prompt": "Run `pwd` and give me the result.",
+    "expected": "bash",
+    "tags": ["bash", "quick"],
+    "rationale": "The explicitly requested command is short and synchronous."
+  },
+  {
+    "id": "agent-security-review",
+    "prompt": "Delegate a security review of the authentication design to another Pi agent so I can inspect its reasoning while it works.",
+    "expected": "background_agent",
+    "tags": ["background_agent", "review"],
+    "rationale": "The task calls for delegated reasoning in an inspectable agent.",
+    "skip": "The parent may reasonably inspect the repository to ground the delegated task, so strict first-tool scoring is ambiguous."
+  },
+  {
+    "id": "agent-research-dependency",
+    "prompt": "Have a separate Pi agent investigate whether we should replace our date library, and let me inspect the research session while it works.",
+    "expected": "background_agent",
+    "tags": ["background_agent", "research"],
+    "rationale": "Open-ended research should be delegated rather than run as a shell command.",
+    "skip": "The prompt activates the research skill, whose mandatory first action is reading its instructions rather than delegating immediately."
+  },
+  {
+    "id": "agent-codebase-analysis",
+    "prompt": "Spin up an inspectable background Pi agent to analyze the codebase and propose a caching strategy.",
+    "expected": "background_agent",
+    "tags": ["background_agent", "analysis"],
+    "rationale": "Codebase analysis is autonomous agent work, not a finite command monitor."
+  },
+  {
+    "id": "no-tool-explain-monitor",
+    "prompt": "In one sentence, explain the difference between a background process and a foreground process.",
+    "expected": null,
+    "tags": ["no-tool", "knowledge"],
+    "rationale": "The question is answerable directly and forbids environment inspection."
+  },
+  {
+    "id": "no-tool-rewrite",
+    "prompt": "Rewrite this sentence to be friendlier: 'Your request cannot be processed.'",
+    "expected": null,
+    "tags": ["no-tool", "writing"],
+    "rationale": "A simple rewrite needs no tool."
+  },
+  {
+    "id": "no-tool-clarify",
+    "prompt": "I want to make the app faster, but I haven't said what is slow. Ask me one useful clarifying question before doing anything.",
+    "expected": null,
+    "tags": ["no-tool", "clarification"],
+    "rationale": "The model should clarify an underspecified request before acting."
+  }
+]

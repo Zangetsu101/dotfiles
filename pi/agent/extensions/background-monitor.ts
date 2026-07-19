@@ -28,13 +28,14 @@ export default function (pi: ExtensionAPI) {
     name: "background_monitor",
     label: "Background monitor",
     description:
-      "Run a long-lived shell command in the background. When it exits, notify the user and wake the agent with its exit status and output.",
-    promptSnippet: "Run background commands whose completion the agent must react to",
+      "Run a slow, finite shell command asynchronously. On exit, wake the agent with its status and captured output.",
+    promptSnippet: "Run slow, finite shell commands asynchronously and wake on completion",
     promptGuidelines: [
-      "Use background_monitor instead of nohup or shell '&' when the agent must react automatically after a background command finishes.",
+      "Slow, finite commands requiring follow-up: use background_monitor.",
+      "Short commands requiring immediate results: use bash.",
     ],
     parameters: Type.Object({
-      command: Type.String({ description: "Shell command to monitor until it exits" }),
+      command: Type.String({ description: "Slow, finite shell command to run asynchronously until it exits" }),
       label: Type.Optional(Type.String({ description: "Short description shown on completion" })),
     }),
 

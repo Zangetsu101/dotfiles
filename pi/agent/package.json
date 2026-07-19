@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "check": "node scripts/sync-pi-dependencies.mjs --check && npm test && tsc --noEmit",
+    "eval:background-monitor": "node --experimental-strip-types evals/background-monitor/run.ts",
     "sync:pi": "node scripts/sync-pi-dependencies.mjs",
     "test": "node --experimental-strip-types --test tests/**/*.test.ts"
   },

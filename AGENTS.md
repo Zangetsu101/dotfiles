@@ -1,1 +1,2 @@
-- After changing `pi/agent/extensions/`, run `npm --prefix pi/agent run check`.
+- Pi extension changes: run `npm --prefix pi/agent run check`.
+- Prompt guidance (`AGENTS.md`, `CLAUDE.md`, tool descriptions): lead with trigger words; use concise, positive phrasing; require an observable action (dead man's rule).
