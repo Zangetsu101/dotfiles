@@ -1,2 +1,5 @@
 - Pi extension changes: run `npm --prefix pi/agent run check`.
-- Prompt guidance (`AGENTS.md`, `CLAUDE.md`, tool descriptions): lead with trigger words; use concise, positive phrasing; require an observable action (dead man's rule).
+- Prompt changes (`AGENTS.md`, `CLAUDE.md`, tool metadata) verify:
+  - trigger-first wording
+  - positive phrasing
+  - observable required action (dead man's rule)

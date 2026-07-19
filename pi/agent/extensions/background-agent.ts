@@ -17,6 +17,12 @@ const STATUS_FILE_ENV = "PI_BACKGROUND_AGENT_STATUS_FILE"
 const AGENT_ID_ENV = "PI_BACKGROUND_AGENT_ID"
 const AGENT_LABEL_ENV = "PI_BACKGROUND_AGENT_LABEL"
 const MAX_RESULT_CHARS = 50_000
+const DELEGATED_TASK_INSTRUCTION =
+  "Delegated task: Complete all work—including skill delegation steps—in this session."
+
+export function delegatedTaskPrompt(task: string): string {
+  return `${DELEGATED_TASK_INSTRUCTION}\n\n${task}`
+}
 
 type Completion = {
   kind: "settled" | "exit"
@@ -284,7 +290,7 @@ export default async function (pi: ExtensionAPI) {
       const piArgs = [...invocation.args, "--name", `agent: ${label}`]
 
       if (ctx.model) piArgs.push("--model", model)
-      piArgs.push("--thinking", thinking, params.task)
+      piArgs.push("--thinking", thinking, delegatedTaskPrompt(params.task))
 
       const shellWrapper = [
         'status="$1"',
