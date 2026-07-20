@@ -154,14 +154,22 @@ export class BackgroundTasks {
     } catch { return undefined }
   }
 
-  async resolve(reference: string, owner: string): Promise<BackgroundTask | undefined> {
+  async resolveReference(reference: string, owner: string): Promise<
+    { kind: "found"; task: BackgroundTask } | { kind: "unknown" } | { kind: "ambiguous" }
+  > {
     const scoped = await this.list(owner)
     const exact = scoped.find((task) => task.id === reference || task.target === reference)
-    if (exact) return exact
+    if (exact) return { kind: "found", task: exact }
     const normalized = reference.toLowerCase()
     const labels = scoped.filter((task) =>
       task.label.toLowerCase() === normalized || safeTaskLabel(task.label) === normalized,
     )
-    return labels.length === 1 ? labels[0] : undefined
+    if (labels.length === 1) return { kind: "found", task: labels[0]! }
+    return { kind: labels.length > 1 ? "ambiguous" : "unknown" }
+  }
+
+  async resolve(reference: string, owner: string): Promise<BackgroundTask | undefined> {
+    const result = await this.resolveReference(reference, owner)
+    return result.kind === "found" ? result.task : undefined
   }
 }

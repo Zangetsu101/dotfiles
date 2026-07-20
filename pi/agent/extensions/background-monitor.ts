@@ -96,10 +96,15 @@ export default function (pi: ExtensionAPI) {
     const [action, ...rest] = args.trim().split(/\s+/); const reference = rest.join(" ")
     if (action === "return") { const parent = process.env.PI_BACKGROUND_TASK_PARENT; if (!process.env.TMUX || !parent) ctx.ui.notify("No parent tmux session is available.", "warning"); else await tasks.attach({ target: parent } as BackgroundTask); return }
     if (action === "clean") { ctx.ui.notify(`Cleaned ${await tasks.cleanup(await tasks.list(process.env.TMUX_PANE ?? ""))} background task(s).`, "info"); return }
-    const task = await tasks.resolve(reference, process.env.TMUX_PANE ?? "")
-    if (!task) { ctx.ui.notify(`Unknown background task: ${reference || "(missing reference)"}`, "error"); return }
+    const resolved = await tasks.resolveReference(reference, process.env.TMUX_PANE ?? "")
+    if (resolved.kind === "unknown") { ctx.ui.notify(`Unknown background task: ${reference || "(missing reference)"}`, "error"); return }
+    if (resolved.kind === "ambiguous") { ctx.ui.notify(`Ambiguous background task label: ${reference}. Use its ID or tmux target.`, "error"); return }
+    const task = resolved.task
     if (action === "attach") { const result = await tasks.attach(task); if (result !== "switched") ctx.ui.notify(`Run: ${result}`, "info"); return }
-    if (action === "terminate") { await tasks.terminate(task); ctx.ui.notify(`Cancelled ${task.id}.`, "info"); return }
+    if (action === "terminate") {
+      if (task.status !== "running") { ctx.ui.notify(`Task ${task.id} is ${task.status}; only running tasks can be terminated.`, "warning"); return }
+      await tasks.terminate(task); ctx.ui.notify(`Cancelled ${task.id}.`, "info"); return
+    }
     ctx.ui.notify("Usage: /task attach|return|terminate|clean [task]", "warning")
   } })
 

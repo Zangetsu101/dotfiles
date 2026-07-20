@@ -93,6 +93,18 @@ test("task references never escape owner scope", async () => {
   assert.equal(await tasks.resolve("two", "%1"), undefined)
 })
 
+test("task references distinguish unknown and ambiguous labels", async () => {
+  const tmux = new FakeTmux()
+  tmux.listOutput = [
+    "first\tmonitor\tone\tduplicate\trunning\t%1\tparent\t/repo\t/tmp/one\t/tmp/out",
+    "second\tagent\ttwo\tduplicate\tcompleted\t%1\tparent\t/repo\t/tmp/two\t/tmp/out",
+  ].join("\n")
+  const tasks = new BackgroundTasks(tmux)
+  assert.deepEqual(await tasks.resolveReference("missing", "%1"), { kind: "unknown" })
+  assert.deepEqual(await tasks.resolveReference("duplicate", "%1"), { kind: "ambiguous" })
+  assert.equal((await tasks.resolveReference("one", "%1")).kind, "found")
+})
+
 test("completion notification can be claimed only once", async () => {
   const directory = await mkdtemp(join(tmpdir(), "background-task-claim-"))
   const statusFile = join(directory, "completion.json")
