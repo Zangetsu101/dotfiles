@@ -235,10 +235,13 @@ export default async function (pi: ExtensionAPI) {
     name: "background_agent",
     label: "Background agent",
     description:
-      "Delegate a task to an inspectable Pi agent in its own tmux session. Returns immediately; the parent is notified when the initial task settles.",
+      "Delegate a task to an inspectable Pi agent in its own tmux session. Returns immediately; the parent automatically receives a completion notification when the initial task settles.",
     promptSnippet: "Delegate work to an inspectable Pi agent running in tmux",
     promptGuidelines: [
-      "Use background_agent instead of background_monitor when delegating a task to another Pi agent, so the user can inspect it while it works.",
+      "Delegated Pi work: use background_agent so the user can inspect it.",
+      "After background_agent starts: continue independent work, or return control to the user while waiting for its automatic completion notification.",
+      "User-requested live progress or a suspected stall: attach to the background agent and inspect its session.",
+      "Missing completion notification: inspect the background agent's task status and session.",
     ],
     parameters: Type.Object({
       task: Type.String({ description: "Task for the background Pi agent" }),
