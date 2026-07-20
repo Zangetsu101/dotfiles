@@ -61,7 +61,7 @@ export class BackgroundTasks {
     try { await this.tmux.run(["-V"]); return true } catch { return false }
   }
 
-  async create(input: { kind: TaskKind; label: string; cwd: string; command: string; args: string[]; owner?: string; parent?: string; remainOnExit?: boolean; interactiveAfterExit?: boolean; env?: Record<string, string>; metadata?: Record<string, string> }): Promise<BackgroundTask> {
+  async create(input: { kind: TaskKind; label: string; cwd: string; command: string; args: string[]; owner?: string; parent?: string; remainOnExit?: boolean; interactiveAfterExit?: boolean; statusFileEnv?: string; env?: Record<string, string>; metadata?: Record<string, string> }): Promise<BackgroundTask> {
     const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
     const target = `pi-${input.kind}-${safeTaskLabel(input.label)}-${id}`
     const directory = await mkdtemp(join(tmpdir(), `pi-background-task-${id}-`))
@@ -70,6 +70,7 @@ export class BackgroundTasks {
     const environment = Object.entries({
       PI_BACKGROUND_TASK_STATUS_FILE: task.statusFile,
       PI_BACKGROUND_TASK_PARENT: task.parent,
+      ...(input.statusFileEnv ? { [input.statusFileEnv]: task.statusFile } : {}),
       ...(input.env ?? {}),
     }).flatMap(([key, value]) => ["-e", `${key}=${value}`])
     const wrapper = [

@@ -20,7 +20,6 @@ import {
 const execFileAsync = promisify(execFile)
 const backgroundTasks = new BackgroundTasks()
 const STATUS_FILE_ENV = "PI_BACKGROUND_AGENT_STATUS_FILE"
-const AGENT_ID_ENV = "PI_BACKGROUND_AGENT_ID"
 const AGENT_LABEL_ENV = "PI_BACKGROUND_AGENT_LABEL"
 const MAX_RESULT_CHARS = 50_000
 const DELEGATED_TASK_INSTRUCTION =
@@ -166,7 +165,7 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string): Promis
 }
 
 export default async function (pi: ExtensionAPI) {
-  const childStatusFile = process.env[STATUS_FILE_ENV] ?? process.env.PI_BACKGROUND_TASK_STATUS_FILE ?? process.env.PI_BACKGROUND_TASK_STATUS_FILE
+  const childStatusFile = process.env[STATUS_FILE_ENV]
   if (childStatusFile) {
     await registerChildBridge(pi, childStatusFile)
     return
@@ -226,7 +225,6 @@ export default async function (pi: ExtensionAPI) {
     void consume()
   }
 
-  const ownerPane = currentTmuxPane()
   for (const agent of agentsCache) {
     if (agent.status === "running" && agent.statusFile) monitor(agent)
   }
@@ -240,8 +238,8 @@ export default async function (pi: ExtensionAPI) {
     promptGuidelines: [
       "Delegated Pi work: use background_agent so the user can inspect it.",
       "After background_agent starts: continue independent work, or return control to the user while waiting for its automatic completion notification.",
-      "User-requested live progress or a suspected stall: attach to the background agent and inspect its session.",
-      "Missing completion notification: inspect the background agent's task status and session.",
+      "background_agent live progress or suspected stalls: attach to the background agent and inspect its session.",
+      "background_agent missing completion notifications: inspect the background agent's task status and session.",
     ],
     parameters: Type.Object({
       task: Type.String({ description: "Task for the background Pi agent" }),
@@ -266,6 +264,7 @@ export default async function (pi: ExtensionAPI) {
       const task = await tasks.create({
         kind: "agent", label, cwd: params.cwd ?? ctx.cwd, parent, owner,
         command: invocation.command, args: piArgs, interactiveAfterExit: true,
+        statusFileEnv: STATUS_FILE_ENV,
         env: { [AGENT_LABEL_ENV]: label, PI_BACKGROUND_AGENT_PARENT: parent },
         metadata: { "@pi_agent_status": "running", "@pi_agent_model": model, "@pi_agent_thinking": thinking },
       })
