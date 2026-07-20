@@ -12,7 +12,6 @@ import {
 } from "./lib/background-activity.ts"
 import {
   BackgroundTasks,
-  safeTaskLabel,
   writeTaskCompletion,
   type AgentTaskCompletion,
 } from "./lib/background-task.ts"
@@ -88,12 +87,6 @@ function piInvocation(): { command: string; args: string[] } {
   return { command: "pi", args: [] }
 }
 
-function agentReference(agent: AgentSession, agents: AgentSession[]): string {
-  const reference = safeTaskLabel(agent.label)
-  const matches = agents.filter((item) => safeTaskLabel(item.label) === reference)
-  return matches.length === 1 ? reference : `${reference}-${agent.id.slice(-4)}`
-}
-
 async function currentTmuxSession(): Promise<string | undefined> {
   if (!process.env.TMUX) return undefined
   try {
@@ -150,18 +143,6 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string): Promis
   pi.on("thinking_level_select", async (event) => {
     await tmux(["set-option", "@pi_agent_thinking", event.level]).catch(() => undefined)
   })
-
-  pi.registerCommand("agent-return", {
-    description: "Return to the tmux session that launched this background agent",
-    handler: async (_args, ctx) => {
-      const parent = process.env.PI_BACKGROUND_AGENT_PARENT
-      if (!process.env.TMUX || !parent) {
-        ctx.ui.notify("No parent tmux session is available.", "warning")
-        return
-      }
-      await tmux(["switch-client", "-t", parent])
-    },
-  })
 }
 
 export default async function (pi: ExtensionAPI) {
@@ -204,7 +185,7 @@ export default async function (pi: ExtensionAPI) {
       const cached = agentsCache.find((item) => item.id === agent.id)
       if (cached) cached.status = failed ? "failed" : "settled"
       const attach = process.env.TMUX
-        ? `/agent-attach ${agentReference(agent, agentsCache)}`
+        ? `/task attach ${agent.id}`
         : `tmux attach -t ${agent.target}`
       const output = completion.output?.trim() || "(no final output)"
 
@@ -274,70 +255,17 @@ export default async function (pi: ExtensionAPI) {
       monitor(agent)
 
       const attach = process.env.TMUX
-        ? `/agent-attach ${agentReference(agent, agentsCache)}`
+        ? `/task attach ${id}`
         : `tmux attach -t ${target}`
       return {
         content: [
           {
             type: "text",
-            text: `Started background agent: ${label}\nModel: ${model} (${thinking})\nTmux target: ${target}\nAttach with: ${attach}\nReturn from the child with: /agent-return`,
+            text: `Started background agent: ${label}\nModel: ${model} (${thinking})\nTmux target: ${target}\nAttach with: ${attach}\nReturn from the child with: /task return`,
           },
         ],
         details: { id, label, target, statusFile },
       }
-    },
-  })
-
-  pi.registerCommand("agents", {
-    description: "List inspectable background Pi agents",
-    handler: async (_args, ctx) => {
-      const agents = await listAgents(currentTmuxPane())
-      agentsCache = agents
-      if (agents.length === 0) {
-        ctx.ui.notify("No background agents found.", "info")
-        return
-      }
-
-      const lines = agents.map(
-        (agent) =>
-          `${agent.id}  ${agent.status || "unknown"}  ${agent.label}\n  ${agent.model || "unknown model"} (${agent.thinking || "unknown effort"})  ${agent.target}`,
-      )
-      ctx.ui.notify(`Background agents:\n${lines.join("\n")}`, "info")
-    },
-  })
-
-  pi.registerCommand("agent-attach", {
-    description: "Attach to a background agent",
-    getArgumentCompletions: (prefix: string) => {
-      const normalizedPrefix = prefix.trim().toLowerCase()
-      const items = agentsCache
-        .map((agent) => ({
-          value: agentReference(agent, agentsCache),
-          label: agent.label,
-          description: `${agent.status || "unknown"} · ${agent.model || "unknown model"} (${agent.thinking || "unknown effort"})`,
-          agent,
-        }))
-        .filter(
-          (item) =>
-            item.value.startsWith(normalizedPrefix) || item.agent.label.toLowerCase().includes(normalizedPrefix),
-        )
-        .map(({ value, label, description }) => ({ value, label, description }))
-      return items.length > 0 ? items : null
-    },
-    handler: async (args, ctx) => {
-      const requested = args.trim()
-      const agents = await listAgents(currentTmuxPane())
-      agentsCache = agents
-      const agent = agents.find(
-        (item) =>
-          item.id === requested || item.target === requested || agentReference(item, agents) === requested,
-      )
-      if (!agent) {
-        ctx.ui.notify(`Unknown background agent: ${requested || "(missing reference)"}`, "error")
-        return
-      }
-      const result = await tasks.attach(agent)
-      if (result !== "switched") ctx.ui.notify(`Run: ${result}`, "info")
     },
   })
 
