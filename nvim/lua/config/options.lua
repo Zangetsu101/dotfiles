@@ -61,8 +61,8 @@ vim.o.scrolloff = 8
 vim.o.undofile = true
 
 -- folding
+vim.wo.foldexpr = 'v:lua.vim.treesitter.foldexpr()'
 vim.o.foldmethod = 'expr'
-vim.o.foldexpr = 'nvim_treesitter#foldexpr()'
 vim.o.foldenable = false
 
 -- Disable netrw

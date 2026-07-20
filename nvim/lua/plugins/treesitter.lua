@@ -1,74 +1,54 @@
 return {
   'nvim-treesitter/nvim-treesitter',
+  lazy = false,
+  branch = 'main',
   build = ':TSUpdate',
-  main = 'nvim-treesitter.configs', -- Sets main module to use for opts
-  opts = {
-    ensure_installed = { 'c', 'cpp', 'css', 'dockerfile', 'graphql', 'jsonc', 'lua', 'rust', 'tsx', 'typescript',
-      'vimdoc', 'markdown', 'markdown_inline', 'bash', 'diff', 'html', 'luadoc', 'query', 'vim' },
-    autotag = {
-      enable = true
-    },
-    highlight = {
-      enable = true
-    },
-    indent = {
-      enable = true
-    },
-    matchup = {
-      enable = true
-    },
-    incremental_selection = {
-      enable = true,
-      keymaps = {
-        init_selection = '<c-space>',
-        node_incremental = '<c-space>',
-        scope_incremental = '<c-s>',
-        node_decremental = '<c-backspace>'
-      }
-    },
-    textobjects = {
-      select = {
-        enable = true,
-        lookahead = true, -- Automatically jump forward to textobj, similar to targets.vim
-        keymaps = {
-          -- You can use the capture groups defined in textobjects.scm
-          ['aa'] = '@parameter.outer',
-          ['ia'] = '@parameter.inner',
-          ['af'] = '@function.outer',
-          ['if'] = '@function.inner',
-          ['ac'] = '@class.outer',
-          ['ic'] = '@class.inner'
-        }
-      },
-      move = {
-        enable = true,
-        set_jumps = true, -- whether to set jumps in the jumplist
-        goto_next_start = {
-          [']m'] = '@function.outer',
-          [']]'] = '@class.outer'
-        },
-        goto_next_end = {
-          [']M'] = '@function.outer',
-          [']['] = '@class.outer'
-        },
-        goto_previous_start = {
-          ['[m'] = '@function.outer',
-          ['[['] = '@class.outer'
-        },
-        goto_previous_end = {
-          ['[M'] = '@function.outer',
-          ['[]'] = '@class.outer'
-        },
-      },
-      swap = {
-        enable = true,
-        swap_next = {
-          ['<leader>a'] = '@parameter.inner'
-        },
-        swap_previous = {
-          ['<leader>A'] = '@parameter.inner'
-        }
-      }
-    }
-  }
+  config = function()
+    local treesitter = require('nvim-treesitter')
+
+    local parsers = { 'c', 'cpp', 'css', 'dockerfile', 'graphql', 'lua', 'rust', 'tsx', 'typescript',
+      'vimdoc', 'markdown', 'markdown_inline', 'bash', 'diff', 'html', 'luadoc', 'query', 'vim' }
+
+    treesitter.install(parsers)
+
+    ---@param buf integer
+    ---@param language string
+    local function treesitter_try_attach(buf, language)
+      -- Check if a parser exists and load it
+      if not vim.treesitter.language.add(language) then return end
+      -- Enable syntax highlighting and other treesitter features
+      vim.treesitter.start(buf, language)
+
+      -- Check if treesitter indentation is available for this language, and if so enable it
+      -- in case there is no indent query, the indentexpr will fallback to the vim's built in one
+      local has_indent_query = vim.treesitter.query.get(language, 'indents') ~= nil
+
+      -- Enable treesitter based indentation
+      if has_indent_query then vim.bo.indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()" end
+    end
+
+    local available_parsers = require('nvim-treesitter').get_available()
+
+    vim.api.nvim_create_autocmd('FileType', {
+      callback = function(args)
+        local buf, filetype = args.buf, args.match
+
+        local language = vim.treesitter.language.get_lang(filetype)
+        if not language then return end
+
+        local installed_parsers = treesitter.get_installed 'parsers'
+
+        if vim.tbl_contains(installed_parsers, language) then
+          -- Enable the parser if it is already installed
+          treesitter_try_attach(buf, language)
+        elseif vim.tbl_contains(available_parsers, language) then
+          -- If a parser is available in `nvim-treesitter`, auto-install it and enable it after the installation is done
+          treesitter.install(language):await(function() treesitter_try_attach(buf, language) end)
+        else
+          -- Try to enable treesitter features in case the parser exists but is not available from `nvim-treesitter`
+          treesitter_try_attach(buf, language)
+        end
+      end,
+    })
+  end,
 }
