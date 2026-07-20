@@ -7,15 +7,25 @@ import { BackgroundTasks, safeTaskLabel, type BackgroundTask } from "./lib/backg
 const MAX_OUTPUT_CHARS = 50_000
 const POLL_MS = 100
 
-export default function (pi: ExtensionAPI) {
-  const tasks = new BackgroundTasks()
+type BackgroundMonitorOptions = {
+  tasks?: BackgroundTasks
+  pollMs?: number
+  owner?: string
+}
+
+export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {}) {
+  const tasks = options.tasks ?? new BackgroundTasks()
+  const pollMs = options.pollMs ?? POLL_MS
+  const owner = options.owner ?? process.env.TMUX_PANE ?? ""
   const timers = new Map<string, NodeJS.Timeout>()
+  const consumers = new Set<Promise<void>>()
   const activities = new Map<string, BackgroundActivity>()
   let shuttingDown = false
+  let shutdown: Promise<void> | undefined
   let taskCache: BackgroundTask[] = []
 
-  const refreshTasks = async () => (taskCache = await tasks.list(process.env.TMUX_PANE ?? ""))
-  const ownedRunning = async () => (await tasks.list(process.env.TMUX_PANE ?? "")).filter((task) => task.kind === "monitor" && task.status === "running")
+  const refreshTasks = async () => (taskCache = await tasks.list(owner))
+  const ownedRunning = async () => (await tasks.list(owner)).filter((task) => task.kind === "monitor" && task.status === "running")
 
   const monitor = (task: BackgroundTask, ctx: ExtensionContext) => {
     if (timers.has(task.id)) return
@@ -44,8 +54,13 @@ export default function (pi: ExtensionAPI) {
       if (ctx.hasUI) ctx.ui.notify(summary, failed ? "error" : "info")
       pi.sendMessage({ customType: "background-monitor", content: `${summary}\nAttach with: ${attach}\n\nOutput:\n${output.trim() || "(no output)"}\n\nReview the result and report it to the user.`, display: true }, { deliverAs: "followUp", triggerTurn: true })
     }
-    timers.set(task.id, setInterval(() => void consume(), POLL_MS))
-    void consume()
+    const launchConsume = () => {
+      const pending = consume()
+      consumers.add(pending)
+      void pending.finally(() => consumers.delete(pending))
+    }
+    timers.set(task.id, setInterval(launchConsume, pollMs))
+    launchConsume()
   }
 
   pi.on("session_start", async (_event, ctx) => {
@@ -76,7 +91,7 @@ export default function (pi: ExtensionAPI) {
 
 
   pi.registerCommand("tasks", { description: "List inspectable background tasks", handler: async (_args, ctx) => {
-    const all = await tasks.list(process.env.TMUX_PANE ?? "")
+    const all = await tasks.list(owner)
     ctx.ui.notify(all.length ? `Background tasks:\n${all.map((task) => `${task.id}  ${task.kind}  ${task.status}  ${task.label}\n  ${task.target}`).join("\n")}` : "No background tasks found.", "info")
   } })
   pi.registerCommand("task", { description: "Attach, return, terminate, or clean background tasks", getArgumentCompletions: (prefix: string) => {
@@ -95,8 +110,8 @@ export default function (pi: ExtensionAPI) {
   }, handler: async (args, ctx) => {
     const [action, ...rest] = args.trim().split(/\s+/); const reference = rest.join(" ")
     if (action === "return") { const parent = process.env.PI_BACKGROUND_TASK_PARENT; if (!process.env.TMUX || !parent) ctx.ui.notify("No parent tmux session is available.", "warning"); else await tasks.attach({ target: parent } as BackgroundTask); return }
-    if (action === "clean") { ctx.ui.notify(`Cleaned ${await tasks.cleanup(await tasks.list(process.env.TMUX_PANE ?? ""))} background task(s).`, "info"); return }
-    const resolved = await tasks.resolveReference(reference, process.env.TMUX_PANE ?? "")
+    if (action === "clean") { ctx.ui.notify(`Cleaned ${await tasks.cleanup(await tasks.list(owner))} background task(s).`, "info"); return }
+    const resolved = await tasks.resolveReference(reference, owner)
     if (resolved.kind === "unknown") { ctx.ui.notify(`Unknown background task: ${reference || "(missing reference)"}`, "error"); return }
     if (resolved.kind === "ambiguous") { ctx.ui.notify(`Ambiguous background task label: ${reference}. Use its ID or tmux target.`, "error"); return }
     const task = resolved.task
@@ -116,13 +131,20 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_before_switch", confirmReplacement)
   pi.on("session_before_fork", confirmReplacement)
   pi.on("session_shutdown", async (event) => {
-    shuttingDown = true
-    for (const timer of timers.values()) clearInterval(timer)
-    timers.clear()
-    if (event.reason === "reload") return
-    for (const task of await ownedRunning()) {
-      await tasks.terminate(task, `Pi session shutdown (${event.reason})`)
-      const activity = activities.get(task.id); if (activity) pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
-    }
+    if (shutdown) return shutdown
+    shutdown = (async () => {
+      shuttingDown = true
+      for (const timer of timers.values()) clearInterval(timer)
+      timers.clear()
+      await Promise.allSettled([...consumers])
+      if (event.reason !== "reload") {
+        for (const task of await ownedRunning()) {
+          await tasks.terminate(task, `Pi session shutdown (${event.reason})`)
+        }
+      }
+      for (const activity of activities.values()) pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
+      activities.clear()
+    })()
+    return shutdown
   })
 }
