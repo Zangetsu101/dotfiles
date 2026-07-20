@@ -76,6 +76,10 @@ async function eventually(predicate: () => boolean) {
   assert.fail("condition was not reached")
 }
 
+test("task completion offers actions before a search term is typed", () => {
+  assert.deepEqual(taskArgumentCompletions([], " ")?.map((item) => item.value), ["attach", "return", "terminate", "clean"])
+})
+
 test("task completion searches task kind, status, label, id, and target", () => {
   const agent = { ...runningTask("agent-one"), kind: "agent" as const, label: "code review", status: "completed" as const }
   const monitor = { ...runningTask("monitor-one"), label: "build release", target: "release-target" }

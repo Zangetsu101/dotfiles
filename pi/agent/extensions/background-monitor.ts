@@ -9,7 +9,9 @@ const POLL_MS = 100
 
 export function taskArgumentCompletions(tasks: BackgroundTask[], prefix: string) {
   const actions = ["attach", "return", "terminate", "clean"]
-  const words = prefix.trimStart().split(/\s+/)
+  const normalized = prefix.trimStart()
+  if (!normalized) return actions.map((value) => ({ value, label: value }))
+  const words = normalized.split(/\s+/)
   if (words.length <= 1 && !prefix.endsWith(" ")) {
     return actions.filter((action) => action.startsWith(words[0] ?? "")).map((value) => ({ value, label: value }))
   }
