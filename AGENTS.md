@@ -8,11 +8,11 @@
 
 ### Issue tracker
 
-Issues are tracked in GitHub Issues; external PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
+Issues are tracked as local markdown files under `.scratch/`; pull requests are not a triage surface. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-The canonical default triage label vocabulary is used. See `docs/agents/triage-labels.md`.
+The canonical default triage vocabulary is used as local issue status metadata. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
