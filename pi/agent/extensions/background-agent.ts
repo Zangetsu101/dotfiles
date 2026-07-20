@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process"
-import { mkdtemp, readFile, rename, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { basename, dirname, join } from "node:path"
+import { readFile } from "node:fs/promises"
+import { basename, dirname } from "node:path"
 import { promisify } from "node:util"
 import { watch, type FSWatcher } from "node:fs"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
@@ -11,8 +10,15 @@ import {
   BACKGROUND_ACTIVITY_STARTED,
   type BackgroundActivity,
 } from "./lib/background-activity.ts"
+import {
+  BackgroundTasks,
+  safeTaskLabel,
+  writeTaskCompletion,
+  type AgentTaskCompletion,
+} from "./lib/background-task.ts"
 
 const execFileAsync = promisify(execFile)
+const backgroundTasks = new BackgroundTasks()
 const STATUS_FILE_ENV = "PI_BACKGROUND_AGENT_STATUS_FILE"
 const AGENT_ID_ENV = "PI_BACKGROUND_AGENT_ID"
 const AGENT_LABEL_ENV = "PI_BACKGROUND_AGENT_LABEL"
@@ -22,13 +28,6 @@ const DELEGATED_TASK_INSTRUCTION =
 
 export function delegatedTaskPrompt(task: string): string {
   return `${DELEGATED_TASK_INSTRUCTION}\n\n${task}`
-}
-
-type Completion = {
-  kind: "settled" | "exit"
-  output?: string
-  exitCode?: number
-  stopReason?: string
 }
 
 type AgentSession = {
@@ -41,6 +40,8 @@ type AgentSession = {
   parent: string
   owner: string
   statusFile: string
+  kind: "agent"
+  cwd: string
 }
 
 function truncateTail(text: string): string {
@@ -75,12 +76,6 @@ function finalAssistantOutput(ctx: ExtensionContext): {
   return { output: "" }
 }
 
-async function writeCompletion(path: string, completion: Completion): Promise<void> {
-  const temporaryPath = `${path}.${process.pid}.tmp`
-  await writeFile(temporaryPath, JSON.stringify(completion), { encoding: "utf8", mode: 0o600 })
-  await rename(temporaryPath, path)
-}
-
 async function tmux(args: string[]): Promise<string> {
   const result = await execFileAsync("tmux", args, { encoding: "utf8" })
   return result.stdout.trim()
@@ -94,18 +89,9 @@ function piInvocation(): { command: string; args: string[] } {
   return { command: "pi", args: [] }
 }
 
-function safeLabel(label: string): string {
-  const value = label
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 24)
-  return value || "task"
-}
-
 function agentReference(agent: AgentSession, agents: AgentSession[]): string {
-  const reference = safeLabel(agent.label)
-  const matches = agents.filter((item) => safeLabel(item.label) === reference)
+  const reference = safeTaskLabel(agent.label)
+  const matches = agents.filter((item) => safeTaskLabel(item.label) === reference)
   return matches.length === 1 ? reference : `${reference}-${agent.id.slice(-4)}`
 }
 
@@ -122,26 +108,15 @@ function currentTmuxPane(): string {
   return process.env.TMUX_PANE ?? ""
 }
 
-async function listAgents(): Promise<AgentSession[]> {
-  let output: string
-  try {
-    output = await tmux([
-      "list-sessions",
-      "-F",
-      "#{session_name}\t#{@pi_agent_id}\t#{@pi_agent_label}\t#{@pi_agent_status}\t#{@pi_agent_model}\t#{@pi_agent_thinking}\t#{@pi_agent_parent}\t#{@pi_agent_owner}\t#{@pi_agent_status_file}",
-    ])
-  } catch {
-    return []
-  }
-
-  return output
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const [target, id, label, status, model, thinking, parent, owner, statusFile] = line.split("\t")
-      return { target, id, label, status, model, thinking, parent, owner, statusFile }
-    })
-    .filter((agent) => Boolean(agent.id))
+async function listAgents(owner?: string): Promise<AgentSession[]> {
+  const generic = (await backgroundTasks.list(owner)).filter((task) => task.kind === "agent")
+  let output = ""
+  try { output = await tmux(["list-sessions", "-F", "#{session_name}\t#{@pi_agent_status}\t#{@pi_agent_model}\t#{@pi_agent_thinking}"]) } catch {}
+  const details = new Map(output.split("\n").filter(Boolean).map((line) => { const [target, status, model, thinking] = line.split("\t"); return [target, { status, model, thinking }] }))
+  return generic.map((task) => {
+    const detail = details.get(task.target)
+    return { ...task, kind: "agent" as const, status: detail?.status || task.status, model: detail?.model || "", thinking: detail?.thinking || "" }
+  })
 }
 
 async function registerChildBridge(pi: ExtensionAPI, statusFile: string): Promise<void> {
@@ -162,7 +137,7 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string): Promis
     if (reported || activeBackgroundActivities.size > 0) return
     reported = true
     const result = finalAssistantOutput(ctx)
-    await writeCompletion(statusFile, {
+    await writeTaskCompletion(statusFile, {
       kind: "settled",
       output: result.output,
       stopReason: result.stopReason,
@@ -191,14 +166,15 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string): Promis
 }
 
 export default async function (pi: ExtensionAPI) {
-  const childStatusFile = process.env[STATUS_FILE_ENV]
+  const childStatusFile = process.env[STATUS_FILE_ENV] ?? process.env.PI_BACKGROUND_TASK_STATUS_FILE ?? process.env.PI_BACKGROUND_TASK_STATUS_FILE
   if (childStatusFile) {
     await registerChildBridge(pi, childStatusFile)
     return
   }
 
   const watchers = new Map<string, FSWatcher>()
-  let agentsCache = await listAgents()
+  const tasks = backgroundTasks
+  let agentsCache = await listAgents(currentTmuxPane())
   let shuttingDown = false
 
   const monitor = (agent: AgentSession) => {
@@ -208,9 +184,9 @@ export default async function (pi: ExtensionAPI) {
     const consume = async () => {
       if (completed || shuttingDown) return
 
-      let completion: Completion
+      let completion: AgentTaskCompletion
       try {
-        completion = JSON.parse(await readFile(agent.statusFile, "utf8")) as Completion
+        completion = JSON.parse(await readFile(agent.statusFile, "utf8")) as AgentTaskCompletion
       } catch {
         return
       }
@@ -220,9 +196,10 @@ export default async function (pi: ExtensionAPI) {
       watchers.delete(agent.id)
       const failed = completion.kind === "exit"
       const status = failed ? `failed with exit code ${completion.exitCode ?? "unknown"}` : "finished its initial task"
-      await tmux(["set-option", "-t", agent.target, "@pi_agent_status", failed ? "failed" : "settled"]).catch(
-        () => undefined,
-      )
+      await Promise.all([
+        tmux(["set-option", "-t", agent.target, "@pi_agent_status", failed ? "failed" : "settled"]),
+        tmux(["set-option", "-t", agent.target, "@pi_task_status", failed ? "failed" : "completed"]),
+      ]).catch(() => undefined)
 
       const summary = `Background agent ${agent.id} (${agent.label}) ${status}.`
       const cached = agentsCache.find((item) => item.id === agent.id)
@@ -251,7 +228,7 @@ export default async function (pi: ExtensionAPI) {
 
   const ownerPane = currentTmuxPane()
   for (const agent of agentsCache) {
-    if (agent.owner === ownerPane && agent.status === "running" && agent.statusFile) monitor(agent)
+    if (agent.status === "running" && agent.statusFile) monitor(agent)
   }
 
   pi.registerTool({
@@ -270,20 +247,11 @@ export default async function (pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      try {
-        await tmux(["-V"])
-      } catch {
-        throw new Error("background_agent requires tmux on PATH")
-      }
+      if (!(await tasks.available())) throw new Error("background_agent requires tmux on PATH")
 
-      const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
       const label = params.label?.trim() || params.task.split("\n", 1)[0].slice(0, 60) || "task"
-      const target = `pi-agent-${safeLabel(label)}-${id}`
-      const statusDir = await mkdtemp(join(tmpdir(), `pi-background-agent-${id}-`))
-      const statusFile = join(statusDir, "completion.json")
       const parent = (await currentTmuxSession()) ?? ""
       const owner = currentTmuxPane()
-      const readyChannel = `pi-background-agent-ready-${id}`
       const invocation = piInvocation()
       const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "default"
       const thinking = pi.getThinkingLevel()
@@ -292,77 +260,16 @@ export default async function (pi: ExtensionAPI) {
       if (ctx.model) piArgs.push("--model", model)
       piArgs.push("--thinking", thinking, delegatedTaskPrompt(params.task))
 
-      const shellWrapper = [
-        'status="$1"',
-        'ready="$2"',
-        "shift 2",
-        'tmux wait-for "$ready"',
-        '"$@"',
-        "code=$?",
-        'if [ ! -e "$status" ]; then',
-        '  printf \'{"kind":"exit","exitCode":%s}\\n\' "$code" > "$status.tmp"',
-        '  mv "$status.tmp" "$status"',
-        "fi",
-        'exec "${SHELL:-/bin/bash}" -l',
-      ].join("\n")
-
-      const command = [
-        "/usr/bin/env",
-        `${STATUS_FILE_ENV}=${statusFile}`,
-        `${AGENT_ID_ENV}=${id}`,
-        `${AGENT_LABEL_ENV}=${label}`,
-        `PI_BACKGROUND_AGENT_PARENT=${parent}`,
-        invocation.command,
-        ...piArgs,
-      ]
-
-      const agent: AgentSession = {
-        id,
-        target,
-        label,
-        status: "running",
-        model,
-        thinking,
-        parent,
-        owner,
-        statusFile,
-      }
+      const task = await tasks.create({
+        kind: "agent", label, cwd: params.cwd ?? ctx.cwd, parent, owner,
+        command: invocation.command, args: piArgs, interactiveAfterExit: true,
+        env: { [AGENT_LABEL_ENV]: label, PI_BACKGROUND_AGENT_PARENT: parent },
+        metadata: { "@pi_agent_status": "running", "@pi_agent_model": model, "@pi_agent_thinking": thinking },
+      })
+      const { id, target, statusFile } = task
+      const agent: AgentSession = { ...task, kind: "agent", model, thinking }
       agentsCache.push(agent)
       monitor(agent)
-
-      try {
-        await tmux([
-          "new-session",
-          "-d",
-          "-s",
-          target,
-          "-c",
-          params.cwd ?? ctx.cwd,
-          "/bin/bash",
-          "-lc",
-          shellWrapper,
-          "background-agent",
-          statusFile,
-          readyChannel,
-          ...command,
-        ])
-        await Promise.all([
-          tmux(["set-option", "-t", target, "@pi_agent_id", id]),
-          tmux(["set-option", "-t", target, "@pi_agent_label", label]),
-          tmux(["set-option", "-t", target, "@pi_agent_status", "running"]),
-          tmux(["set-option", "-t", target, "@pi_agent_model", model]),
-          tmux(["set-option", "-t", target, "@pi_agent_thinking", thinking]),
-          tmux(["set-option", "-t", target, "@pi_agent_parent", parent]),
-          tmux(["set-option", "-t", target, "@pi_agent_owner", owner]),
-          tmux(["set-option", "-t", target, "@pi_agent_status_file", statusFile]),
-        ])
-        await tmux(["wait-for", "-S", readyChannel])
-      } catch (error) {
-        watchers.get(id)?.close()
-        watchers.delete(id)
-        await tmux(["kill-session", "-t", target]).catch(() => undefined)
-        throw error
-      }
 
       const attach = process.env.TMUX
         ? `/agent-attach ${agentReference(agent, agentsCache)}`
@@ -382,7 +289,7 @@ export default async function (pi: ExtensionAPI) {
   pi.registerCommand("agents", {
     description: "List inspectable background Pi agents",
     handler: async (_args, ctx) => {
-      const agents = await listAgents()
+      const agents = await listAgents(currentTmuxPane())
       agentsCache = agents
       if (agents.length === 0) {
         ctx.ui.notify("No background agents found.", "info")
@@ -417,7 +324,7 @@ export default async function (pi: ExtensionAPI) {
     },
     handler: async (args, ctx) => {
       const requested = args.trim()
-      const agents = await listAgents()
+      const agents = await listAgents(currentTmuxPane())
       agentsCache = agents
       const agent = agents.find(
         (item) =>
@@ -427,11 +334,8 @@ export default async function (pi: ExtensionAPI) {
         ctx.ui.notify(`Unknown background agent: ${requested || "(missing reference)"}`, "error")
         return
       }
-      if (!process.env.TMUX) {
-        ctx.ui.notify(`Run: tmux attach -t ${agent.target}`, "info")
-        return
-      }
-      await tmux(["switch-client", "-t", agent.target])
+      const result = await tasks.attach(agent)
+      if (result !== "switched") ctx.ui.notify(`Run: ${result}`, "info")
     },
   })
 
