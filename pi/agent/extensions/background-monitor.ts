@@ -2,10 +2,33 @@ import { readFile } from "node:fs/promises"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 import { BACKGROUND_ACTIVITY_FINISHED, BACKGROUND_ACTIVITY_STARTED, type BackgroundActivity } from "./lib/background-activity.ts"
-import { BackgroundTasks, safeTaskLabel, type BackgroundTask } from "./lib/background-task.ts"
+import { BACKGROUND_TASK_CREATED, BackgroundTasks, safeTaskLabel, type BackgroundTask } from "./lib/background-task.ts"
 
 const MAX_OUTPUT_CHARS = 50_000
 const POLL_MS = 100
+
+export function taskArgumentCompletions(tasks: BackgroundTask[], prefix: string) {
+  const actions = ["attach", "return", "terminate", "clean"]
+  const words = prefix.trimStart().split(/\s+/)
+  if (words.length <= 1 && !prefix.endsWith(" ")) {
+    return actions.filter((action) => action.startsWith(words[0] ?? "")).map((value) => ({ value, label: value }))
+  }
+  const action = words[0]
+  if (action === "return" || action === "clean") return null
+  if (action !== "attach" && action !== "terminate") return null
+  const query = words.slice(1).join(" ").toLowerCase()
+  const matches = tasks.filter((task) =>
+    [task.kind, task.status, task.label, safeTaskLabel(task.label), task.id, task.target]
+      .join(" ")
+      .toLowerCase()
+      .includes(query),
+  ).map((task) => ({
+    value: `${action} ${task.id}`,
+    label: task.label,
+    description: `${task.kind} · ${task.status} · ${task.target}`,
+  }))
+  return matches.length ? matches : null
+}
 
 type BackgroundMonitorOptions = {
   tasks?: BackgroundTasks
@@ -63,6 +86,11 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     launchConsume()
   }
 
+  pi.events.on(BACKGROUND_TASK_CREATED, (task) => {
+    const created = task as BackgroundTask
+    if (created.owner === owner && !taskCache.some((item) => item.id === created.id)) taskCache.push(created)
+  })
+
   pi.on("session_start", async (_event, ctx) => {
     for (const task of await refreshTasks()) {
       if (task.kind === "monitor" && task.status === "running") monitor(task, ctx)
@@ -92,22 +120,10 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
 
   pi.registerCommand("tasks", { description: "List inspectable background tasks", handler: async (_args, ctx) => {
     const all = await tasks.list(owner)
+    taskCache = all
     ctx.ui.notify(all.length ? `Background tasks:\n${all.map((task) => `${task.id}  ${task.kind}  ${task.status}  ${task.label}\n  ${task.target}`).join("\n")}` : "No background tasks found.", "info")
   } })
-  pi.registerCommand("task", { description: "Attach, return, terminate, or clean background tasks", getArgumentCompletions: (prefix: string) => {
-    const actions = ["attach", "return", "terminate", "clean"]
-    const words = prefix.trimStart().split(/\s+/)
-    if (words.length <= 1 && !prefix.endsWith(" ")) return actions.filter((action) => action.startsWith(words[0] ?? "")).map((value) => ({ value, label: value }))
-    const action = words[0]
-    if (action === "return" || action === "clean") return null
-    const referencePrefix = words.slice(1).join(" ").toLowerCase()
-    const matches = taskCache.flatMap((task) => [
-      { value: `${action} ${safeTaskLabel(task.label)}`, label: task.label, description: `${task.kind} · ${task.status}` },
-      { value: `${action} ${task.id}`, label: task.id, description: `${task.kind} · ${task.status}` },
-      { value: `${action} ${task.target}`, label: task.target, description: `${task.kind} · ${task.status}` },
-    ]).filter((item) => item.value.slice(action!.length + 1).toLowerCase().startsWith(referencePrefix))
-    return matches.length ? matches : null
-  }, handler: async (args, ctx) => {
+  pi.registerCommand("task", { description: "Attach, return, terminate, or clean background tasks", getArgumentCompletions: (prefix: string) => taskArgumentCompletions(taskCache, prefix), handler: async (args, ctx) => {
     const [action, ...rest] = args.trim().split(/\s+/); const reference = rest.join(" ")
     if (action === "return") { const parent = process.env.PI_BACKGROUND_TASK_PARENT; if (!process.env.TMUX || !parent) ctx.ui.notify("No parent tmux session is available.", "warning"); else await tasks.attach({ target: parent } as BackgroundTask); return }
     if (action === "clean") { ctx.ui.notify(`Cleaned ${await tasks.cleanup(await tasks.list(owner))} background task(s).`, "info"); return }

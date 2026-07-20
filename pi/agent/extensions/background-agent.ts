@@ -11,6 +11,7 @@ import {
   type BackgroundActivity,
 } from "./lib/background-activity.ts"
 import {
+  BACKGROUND_TASK_CREATED,
   BackgroundTasks,
   writeTaskCompletion,
   type AgentTaskCompletion,
@@ -252,6 +253,7 @@ export default async function (pi: ExtensionAPI) {
       const { id, target, statusFile } = task
       const agent: AgentSession = { ...task, kind: "agent", model, thinking }
       agentsCache.push(agent)
+      pi.events.emit(BACKGROUND_TASK_CREATED, task)
       monitor(agent)
 
       const attach = process.env.TMUX

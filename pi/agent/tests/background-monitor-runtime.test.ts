@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
 import test from "node:test"
-import backgroundMonitorExtension from "../extensions/background-monitor.ts"
+import backgroundMonitorExtension, { taskArgumentCompletions } from "../extensions/background-monitor.ts"
 import { BACKGROUND_ACTIVITY_FINISHED, BACKGROUND_ACTIVITY_STARTED } from "../extensions/lib/background-activity.ts"
 import type { BackgroundTask, TaskCompletion } from "../extensions/lib/background-task.ts"
 
@@ -75,6 +75,15 @@ async function eventually(predicate: () => boolean) {
   }
   assert.fail("condition was not reached")
 }
+
+test("task completion searches task kind, status, label, id, and target", () => {
+  const agent = { ...runningTask("agent-one"), kind: "agent" as const, label: "code review", status: "completed" as const }
+  const monitor = { ...runningTask("monitor-one"), label: "build release", target: "release-target" }
+
+  assert.deepEqual(taskArgumentCompletions([agent, monitor], "attach agent")?.map((item) => item.value), ["attach agent-one"])
+  assert.deepEqual(taskArgumentCompletions([agent, monitor], "attach completed")?.map((item) => item.value), ["attach agent-one"])
+  assert.deepEqual(taskArgumentCompletions([agent, monitor], "attach release-target")?.map((item) => item.value), ["attach monitor-one"])
+})
 
 test("reload hands a running monitor to the replacement runtime and reports its completion once", async () => {
   const shared = new SharedTasks()
