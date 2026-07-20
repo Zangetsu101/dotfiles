@@ -5,7 +5,8 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 ## Conventions
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.
-- **Read an issue**: `gh issue view <number> --comments`, filtering comments by `jq` and also fetching labels.
+- **Issue graph**: when reading an issue, fetch its body, comments, labels, native sub-issues, and dependency summary. Use `gh issue view <number> --comments` for the conversation, `gh api repos/<owner>/<repo>/issues/<number>/sub_issues --paginate` for children, and `gh api repos/<owner>/<repo>/issues/<number>` for `issue_dependencies_summary`.
+- **Executable scope**: when the issue graph has children, list them in dependency order before starting work. Treat the child tickets and their acceptance criteria as the executable scope; report which children are included, blocked, or deferred. Call the parent complete after every required child is verified and resolved.
 - **List issues**: `gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with appropriate `--label` and `--state` filters.
 - **Comment on an issue**: `gh issue comment <number> --body "..."`
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
@@ -27,7 +28,7 @@ Create a GitHub issue.
 
 ## When a skill says "fetch the relevant ticket"
 
-Run `gh issue view <number> --comments`.
+Fetch the issue graph. Return the child-ticket acceptance criteria with the parent so downstream work receives the complete executable scope.
 
 ## Wayfinding operations
 
