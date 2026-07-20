@@ -1,6 +1,6 @@
 - Pi extension changes: run `npm --prefix pi/agent run check`.
 - Prompt changes (`AGENTS.md`, `CLAUDE.md`, tool metadata) verify:
-  - trigger-first wording
+  - leading words
   - positive phrasing
   - observable required action (dead man's rule)
 
