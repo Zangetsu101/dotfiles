@@ -8,6 +8,7 @@ import { promisify } from "node:util"
 import { BackgroundTasks, type TmuxProcessAdapter } from "../extensions/lib/background-task.ts"
 
 const execFileAsync = promisify(execFile)
+const callIndex = (args: string[], flag: string) => args.indexOf(flag) + 1
 
 class FakeTmux implements TmuxProcessAdapter {
   calls: string[][] = []
@@ -16,7 +17,13 @@ class FakeTmux implements TmuxProcessAdapter {
   async run(args: string[]): Promise<string> {
     this.calls.push(args)
     if (this.failOn && args.includes(this.failOn)) throw new Error("tmux failure")
-    if (args[0] === "list-sessions") return this.listOutput
+    if (args[0] === "list-windows") {
+      if (this.listOutput) return this.listOutput
+      const options = new Map(this.calls.filter((call) => call[0] === "set-option" && call.includes("-w")).map((call) => [call.at(-2)!, call.at(-1)!]))
+      const hub = this.calls.find((call) => call[0] === "new-session")?.[callIndex(this.calls.find((call) => call[0] === "new-session")!, "-s")] ?? ""
+      return [`${hub}:1`, ...["kind", "id", "label", "status", "owner", "parent", "cwd", "status_file", "output_file"].map((key) => options.get(`@pi_task_${key}`) ?? "")].join("\t")
+    }
+    if (args[0] === "list-sessions") return ""
     return args[0] === "-V" ? "tmux 3.4" : ""
   }
 }
@@ -26,7 +33,7 @@ test("creating a task publishes durable task metadata before releasing its comma
   const tasks = new BackgroundTasks(tmux)
   const task = await tasks.create({ kind: "monitor", label: "Run checks!", cwd: "/repo", command: "/bin/bash", args: ["-lc", "npm test"], remainOnExit: true })
 
-  assert.match(task.target, /^pi-monitor-run-checks-/)
+  assert.match(task.target, /^pi-tasks-[^:]+:\d+$/)
   assert.ok(tmux.calls.some((args) => args.includes("@pi_task_kind") && args.at(-1) === "monitor"))
   assert.ok(tmux.calls.some((args) => args.includes("remain-on-exit") && args.at(-1) === "on"))
   const release = tmux.calls.findIndex((args) => args[0] === "wait-for" && args[1] === "-S")
@@ -68,7 +75,7 @@ test("agent tasks preserve their interactive child session and parent navigation
     interactiveAfterExit: true,
   })
 
-  const creation = tmux.calls.find((args) => args[0] === "new-session")!
+  const creation = tmux.calls.find((args) => args[0] === "new-window")!
   assert.ok(creation.includes("PI_BACKGROUND_TASK_PARENT=parent-session"))
   assert.match(creation.join("\n"), /exec \"\$\{SHELL:-\/bin\/bash\}\" -l/)
 })
@@ -94,7 +101,7 @@ test("discovery, external attachment, and cleanup expose task behavior", async (
     if (previousTmux !== undefined) process.env.TMUX = previousTmux
   }
   assert.equal(await tasks.cleanup(discovered), 1)
-  assert.ok(tmux.calls.some((args) => args[0] === "kill-session" && args.at(-1) === "pi-monitor-check-abc"))
+  assert.ok(tmux.calls.some((args) => args[0] === "kill-window" && args.at(-1) === "pi-monitor-check-abc"))
 })
 
 test("discovery includes output files and scopes even an empty owner", async () => {
@@ -145,6 +152,7 @@ test("termination records cancellation and signals the pane foreground group", a
   const directory = await mkdtemp(join(tmpdir(), "background-task-cancel-"))
   const task = { id: "one", kind: "monitor", label: "one", status: "running", target: "one", owner: "", parent: "", cwd: "/repo", statusFile: join(directory, "completion.json") } as const
   const tmux = new FakeTmux()
+  tmux.listOutput = "one\tmonitor\tone\tone\trunning\t\t\t/repo\t" + task.statusFile
   await new BackgroundTasks(tmux).terminate(task)
   assert.ok(tmux.calls.some((args) => args[0] === "send-keys" && args.at(-1) === "C-c"))
 })
@@ -154,5 +162,5 @@ test("default cleanup leaves running tasks inspectable", async () => {
   const tasks = new BackgroundTasks(tmux)
   const removed = await tasks.cleanup([{ id: "one", kind: "monitor", label: "live", status: "running", target: "live-target", owner: "", parent: "", cwd: "/repo", statusFile: "/tmp/status" }])
   assert.equal(removed, 0)
-  assert.equal(tmux.calls.length, 0)
+  assert.ok(!tmux.calls.some((args) => args[0] === "kill-window" || args[0] === "kill-session"))
 })

@@ -16,8 +16,8 @@ export function taskArgumentCompletions(tasks: BackgroundTask[], prefix: string)
     return actions.filter((action) => action.startsWith(words[0] ?? "")).map((value) => ({ value, label: value }))
   }
   const action = words[0]
-  if (action === "return" || action === "clean") return null
-  if (action !== "attach" && action !== "terminate") return null
+  if (action === "return") return null
+  if (action !== "attach" && action !== "terminate" && action !== "clean") return null
   const query = words.slice(1).join(" ").toLowerCase()
   const matches = tasks.filter((task) =>
     [task.kind, task.status, task.label, safeTaskLabel(task.label), task.id, task.target]
@@ -50,7 +50,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
   let taskCache: BackgroundTask[] = []
 
   const refreshTasks = async () => (taskCache = await tasks.list(owner))
-  const ownedRunning = async () => (await tasks.list(owner)).filter((task) => task.kind === "monitor" && task.status === "running")
+  const ownedRunning = async () => (await tasks.list(owner)).filter((task) => task.storageMode !== "legacy" && task.kind === "monitor" && task.status === "running")
 
   const monitor = (task: BackgroundTask, ctx: ExtensionContext) => {
     if (timers.has(task.id)) return
@@ -95,7 +95,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
 
   pi.on("session_start", async (_event, ctx) => {
     for (const task of await refreshTasks()) {
-      if (task.kind === "monitor" && task.status === "running") monitor(task, ctx)
+      if (task.storageMode !== "legacy" && task.kind === "monitor" && task.status === "running") monitor(task, ctx)
     }
   })
 
@@ -110,7 +110,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       if (!(await tasks.available())) throw new Error("background_monitor requires tmux on PATH")
       const label = params.label?.trim() || params.command
       let task: BackgroundTask
-      try { task = await tasks.create({ kind: "monitor", label, cwd: ctx.cwd, command: "/bin/bash", args: ["-lc", params.command], remainOnExit: true }) }
+      try { task = await tasks.create({ kind: "monitor", label, cwd: ctx.cwd, owner, command: "/bin/bash", args: ["-lc", params.command], remainOnExit: true }) }
       catch (error) { throw new Error(`background_monitor failed to start tmux task: ${error instanceof Error ? error.message : String(error)}`) }
       taskCache.push(task)
       monitor(task, ctx)
@@ -123,16 +123,18 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
   pi.registerCommand("tasks", { description: "List inspectable background tasks", handler: async (_args, ctx) => {
     const all = await tasks.list(owner)
     taskCache = all
-    ctx.ui.notify(all.length ? `Background tasks:\n${all.map((task) => `${task.id}  ${task.kind}  ${task.status}  ${task.label}\n  ${task.target}`).join("\n")}` : "No background tasks found.", "info")
+    ctx.ui.notify(all.length ? `Background tasks:\n${all.map((task) => `${task.id}  ${task.kind}  ${task.storageMode === "legacy" ? "cleanup-only" : task.status}  ${task.label}\n  ${task.target} · ${task.storageMode ?? "hub"}`).join("\n")}` : "No background tasks found.", "info")
   } })
   pi.registerCommand("task", { description: "Attach, return, terminate, or clean background tasks", getArgumentCompletions: (prefix: string) => taskArgumentCompletions(taskCache, prefix), handler: async (args, ctx) => {
     const [action, ...rest] = args.trim().split(/\s+/); const reference = rest.join(" ")
     if (action === "return") { const parent = process.env.PI_BACKGROUND_TASK_PARENT; if (!process.env.TMUX || !parent) ctx.ui.notify("No parent tmux session is available.", "warning"); else await tasks.attach({ target: parent } as BackgroundTask); return }
-    if (action === "clean") { ctx.ui.notify(`Cleaned ${await tasks.cleanup(await tasks.list(owner))} background task(s).`, "info"); return }
+    if (action === "clean" && !reference) { ctx.ui.notify(`Cleaned ${await tasks.cleanup(await tasks.list(owner))} background task(s).`, "info"); return }
     const resolved = await tasks.resolveReference(reference, owner)
     if (resolved.kind === "unknown") { ctx.ui.notify(`Unknown background task: ${reference || "(missing reference)"}`, "error"); return }
     if (resolved.kind === "ambiguous") { ctx.ui.notify(`Ambiguous background task label: ${reference}. Use its ID or tmux target.`, "error"); return }
     const task = resolved.task
+    if (action === "clean") { ctx.ui.notify(`Cleaned ${await tasks.cleanup([task])} background task(s).`, "info"); return }
+    if (task.storageMode === "legacy") { ctx.ui.notify(`Legacy cleanup-only task ${task.id} cannot be ${action === "attach" ? "attached" : "terminated"}. Use /task clean ${task.id}.`, "warning"); return }
     if (action === "attach") { const result = await tasks.attach(task); if (result !== "switched") ctx.ui.notify(`Run: ${result}`, "info"); return }
     if (action === "terminate") {
       if (task.status !== "running") { ctx.ui.notify(`Task ${task.id} is ${task.status}; only running tasks can be terminated.`, "warning"); return }

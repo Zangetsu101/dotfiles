@@ -12,6 +12,7 @@ test("status line summarizes only running agents and monitors", () => {
     task("agent", "running"),
     { ...task("agent", "running"), id: "agent-two" },
     task("monitor", "running"),
+    { ...task("monitor", "running"), id: "legacy-monitor", storageMode: "legacy" },
     task("monitor", "completed"),
   ]), "tasks: 2 agents · 1 monitor")
   assert.equal(formatRunningTasks([task("agent", "completed")]), undefined)

@@ -5,7 +5,7 @@ const REFRESH_MS = 1_000
 const STATUS_KEY = "background-tasks"
 
 export function formatRunningTasks(tasks: BackgroundTask[]): string | undefined {
-  const running = tasks.filter((task) => task.status === "running")
+  const running = tasks.filter((task) => task.storageMode !== "legacy" && task.status === "running")
   if (!running.length) return undefined
   const agents = running.filter((task) => task.kind === "agent").length
   const monitors = running.filter((task) => task.kind === "monitor").length
