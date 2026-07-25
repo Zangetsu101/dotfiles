@@ -5,6 +5,8 @@ import backgroundAgentExtension, { delegatedTaskPrompt } from "../extensions/bac
 test("generic background task metadata does not turn Pi into an agent child bridge", async () => {
   const previousTaskStatus = process.env.PI_BACKGROUND_TASK_STATUS_FILE
   const previousAgentStatus = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
+  const previousTmuxPane = process.env.TMUX_PANE
+  process.env.TMUX_PANE = "%isolated-background-agent-test"
   process.env.PI_BACKGROUND_TASK_STATUS_FILE = "/tmp/generic-task-status"
   delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
   const tools: string[] = []
@@ -23,6 +25,8 @@ test("generic background task metadata does not turn Pi into an agent child brid
     else process.env.PI_BACKGROUND_TASK_STATUS_FILE = previousTaskStatus
     if (previousAgentStatus === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
     else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousAgentStatus
+    if (previousTmuxPane === undefined) delete process.env.TMUX_PANE
+    else process.env.TMUX_PANE = previousTmuxPane
   }
 })
 

@@ -1,9 +1,13 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { mkdtemp, writeFile } from "node:fs/promises"
+import { execFile } from "node:child_process"
+import { mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { promisify } from "node:util"
 import { BackgroundTasks, type TmuxProcessAdapter } from "../extensions/lib/background-task.ts"
+
+const execFileAsync = promisify(execFile)
 
 class FakeTmux implements TmuxProcessAdapter {
   calls: string[][] = []
@@ -28,6 +32,28 @@ test("creating a task publishes durable task metadata before releasing its comma
   const release = tmux.calls.findIndex((args) => args[0] === "wait-for" && args[1] === "-S")
   const finalMetadata = tmux.calls.findIndex((args) => args.includes("@pi_task_output_file"))
   assert.ok(release > finalMetadata)
+})
+
+test("real tmux tasks preserve the child terminal while capturing output", async (t) => {
+  try { await execFileAsync("tmux", ["-V"]) } catch { t.skip("tmux is unavailable"); return }
+  const tasks = new BackgroundTasks()
+  const task = await tasks.create({
+    kind: "agent",
+    label: "tty-test",
+    cwd: process.cwd(),
+    command: "/bin/bash",
+    args: ["-c", "[ -t 0 ] && [ -t 1 ] && echo interactive-tty"],
+    remainOnExit: true,
+  })
+  try {
+    for (let attempt = 0; attempt < 20 && !(await tasks.completion(task)); attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    assert.deepEqual(await tasks.completion(task), { status: "completed", exitCode: 0 })
+    assert.match(await readFile(task.outputFile!, "utf8"), /interactive-tty/)
+  } finally {
+    await tasks.cleanup([{ ...task, status: "completed" }])
+  }
 })
 
 test("agent tasks preserve their interactive child session and parent navigation", async () => {

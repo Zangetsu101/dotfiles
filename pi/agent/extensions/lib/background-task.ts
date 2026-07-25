@@ -46,6 +46,10 @@ export function safeTaskLabel(label: string): string {
   return label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "task"
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`
+}
+
 export async function writeTaskCompletion(path: string, completion: TaskCompletionRecord): Promise<void> {
   const temporary = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
   await writeFile(temporary, JSON.stringify(completion), { encoding: "utf8", mode: 0o600 })
@@ -78,9 +82,8 @@ export class BackgroundTasks {
     const wrapper = [
       'status="$1"; output="$2"; ready="$3"; shift 3',
       'tmux wait-for "$ready"',
-      'set -o pipefail',
-      '"$@" 2>&1 | tee "$output"',
-      'code=${PIPESTATUS[0]}',
+      '"$@"',
+      'code=$?',
       'state=completed; [ "$code" -eq 0 ] || state=failed',
       'if [ ! -e "$status" ]; then',
       '  printf \'{"status":"%s","exitCode":%s}\\n\' "$state" "$code" > "$status.tmp"',
@@ -94,6 +97,7 @@ export class BackgroundTasks {
       await Promise.all([
         ...metadata.map(([key, value]) => this.tmux.run(["set-option", "-t", target, `@pi_task_${key}`, value])),
         ...Object.entries(input.metadata ?? {}).map(([key, value]) => this.tmux.run(["set-option", "-t", target, key, value])),
+        this.tmux.run(["pipe-pane", "-t", target, `cat >> ${shellQuote(task.outputFile!)}`]),
       ])
       if (input.remainOnExit) await this.tmux.run(["set-option", "-t", target, "remain-on-exit", "on"])
       // The channel is metadata too: wrappers may wait until setup is durable.
