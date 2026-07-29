@@ -184,7 +184,7 @@ test("legacy session tasks are visible cleanup-only and never managed as active 
 
     const listed = await tasks.list("%owner")
     assert.deepEqual(listed.map((task) => [task.id, task.storageMode]), [[current.details.id, "hub"], ["old-one", "legacy"]])
-    await runtime.commands.get("tasks").handler("", runtime.context)
+    await runtime.commands.get("task").handler("list", runtime.context)
     assert.match(runtime.notifications.at(-1) ?? "", /old-one  monitor  cleanup-only  old build/)
     assert.equal(runtime.messages.length, 0)
 

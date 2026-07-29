@@ -8,7 +8,7 @@ const MAX_OUTPUT_CHARS = 50_000
 const POLL_MS = 100
 
 export function taskArgumentCompletions(tasks: BackgroundTask[], prefix: string) {
-  const actions = ["attach", "return", "terminate", "clean"]
+  const actions = ["list", "attach", "return", "terminate", "clean"]
   const normalized = prefix.trimStart()
   if (!normalized) return actions.map((value) => ({ value, label: value }))
   const words = normalized.split(/\s+/)
@@ -16,7 +16,7 @@ export function taskArgumentCompletions(tasks: BackgroundTask[], prefix: string)
     return actions.filter((action) => action.startsWith(words[0] ?? "")).map((value) => ({ value, label: value }))
   }
   const action = words[0]
-  if (action === "return") return null
+  if (action === "list" || action === "return") return null
   if (action !== "attach" && action !== "terminate" && action !== "clean") return null
   const query = words.slice(1).join(" ").toLowerCase()
   const matches = tasks.filter((task) =>
@@ -120,13 +120,14 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
   })
 
 
-  pi.registerCommand("tasks", { description: "List inspectable background tasks", handler: async (_args, ctx) => {
-    const all = await tasks.list(owner)
-    taskCache = all
-    ctx.ui.notify(all.length ? `Background tasks:\n${all.map((task) => `${task.id}  ${task.kind}  ${task.storageMode === "legacy" ? "cleanup-only" : task.status}  ${task.label}\n  ${task.target} · ${task.storageMode ?? "hub"}`).join("\n")}` : "No background tasks found.", "info")
-  } })
-  pi.registerCommand("task", { description: "Attach, return, terminate, or clean background tasks", getArgumentCompletions: (prefix: string) => taskArgumentCompletions(taskCache, prefix), handler: async (args, ctx) => {
+  pi.registerCommand("task", { description: "List, attach, return, terminate, or clean background tasks", getArgumentCompletions: (prefix: string) => taskArgumentCompletions(taskCache, prefix), handler: async (args, ctx) => {
     const [action, ...rest] = args.trim().split(/\s+/); const reference = rest.join(" ")
+    if (action === "list") {
+      const all = await tasks.list(owner)
+      taskCache = all
+      ctx.ui.notify(all.length ? `Background tasks:\n${all.map((task) => `${task.id}  ${task.kind}  ${task.storageMode === "legacy" ? "cleanup-only" : task.status}  ${task.label}\n  ${task.target} · ${task.storageMode ?? "hub"}`).join("\n")}` : "No background tasks found.", "info")
+      return
+    }
     if (action === "return") { const parent = process.env.PI_BACKGROUND_TASK_PARENT; if (!process.env.TMUX || !parent) ctx.ui.notify("No parent tmux session is available.", "warning"); else await tasks.attach({ target: parent } as BackgroundTask); return }
     if (action === "clean" && !reference) { ctx.ui.notify(`Cleaned ${await tasks.cleanup(await tasks.list(owner))} background task(s).`, "info"); return }
     const resolved = await tasks.resolveReference(reference, owner)
@@ -140,7 +141,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       if (task.status !== "running") { ctx.ui.notify(`Task ${task.id} is ${task.status}; only running tasks can be terminated.`, "warning"); return }
       await tasks.terminate(task); ctx.ui.notify(`Cancelled ${task.id}.`, "info"); return
     }
-    ctx.ui.notify("Usage: /task attach|return|terminate|clean [task]", "warning")
+    ctx.ui.notify("Usage: /task list|attach|return|terminate|clean [task]", "warning")
   } })
 
   const confirmReplacement = async (_event: unknown, ctx: any) => {

@@ -44,10 +44,11 @@ function runtime(shared: SharedTasks, confirmations: boolean[] = []) {
   const activity = { started: [] as string[], finished: [] as string[] }
   events.on(BACKGROUND_ACTIVITY_STARTED, (item) => activity.started.push(item.id))
   events.on(BACKGROUND_ACTIVITY_FINISHED, (item) => activity.finished.push(item.id))
+  const commands = new Map<string, any>()
   const pi = {
     events,
     on(name: string, handler: Handler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]) },
-    registerTool() {}, registerCommand() {},
+    registerTool() {}, registerCommand(name: string, command: any) { commands.set(name, command) },
     sendMessage(message: any) { messages.push(message) },
   } as any
   const ctx = {
@@ -59,7 +60,7 @@ function runtime(shared: SharedTasks, confirmations: boolean[] = []) {
   }
   backgroundMonitorExtension(pi, { tasks: shared as any, pollMs: 5, owner: "%test" })
   return {
-    messages, notifications, prompts, activity,
+    messages, notifications, prompts, activity, commands,
     async emit(name: string, event: any = {}) {
       let result
       for (const handler of handlers.get(name) ?? []) result = await handler(event, ctx)
@@ -77,7 +78,17 @@ async function eventually(predicate: () => boolean) {
 }
 
 test("task completion offers actions before a search term is typed", () => {
-  assert.deepEqual(taskArgumentCompletions([], " ")?.map((item) => item.value), ["attach", "return", "terminate", "clean"])
+  assert.deepEqual(taskArgumentCompletions([], " ")?.map((item) => item.value), ["list", "attach", "return", "terminate", "clean"])
+})
+
+test("task list replaces the tasks command", async () => {
+  const shared = new SharedTasks()
+  shared.tasks.push(runningTask())
+  const current = runtime(shared)
+
+  assert.equal(current.commands.has("tasks"), false)
+  await current.commands.get("task").handler("list", { ui: { notify: (message: string) => current.notifications.push(message) } })
+  assert.match(current.notifications[0]!, /Background tasks:\none  monitor  running  task one/)
 })
 
 test("task completion searches task kind, status, label, id, and target", () => {
