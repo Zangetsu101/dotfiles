@@ -1,15 +1,15 @@
 # .dotfiles
 
-| Config                | Path                       |
-| --------------------- | -------------------------- |
-| Neovim                | `nvim/`                    |
-| tmux                  | `tmux/`                    |
-| Alacritty             | `alacritty/alacritty.toml` |
-| Starship              | `starship/starship.toml`   |
-| Git                   | `git/.gitconfig`           |
-| Claude Code           | `claude/`                  |
-| Pi                    | `pi/agent/`                |
-| Agent-agnostic config | `agents/`                  |
+| Config                | Path                     |
+| --------------------- | ------------------------ |
+| Neovim                | `nvim/`                  |
+| tmux                  | `tmux/`                  |
+| Alacritty             | `alacritty/`             |
+| Starship              | `starship/starship.toml` |
+| Git                   | `git/`                   |
+| Claude Code           | `claude/`                |
+| Pi                    | `pi/agent/`              |
+| Agent-agnostic config | `agents/`                |
 
 ## Setup
 
@@ -18,8 +18,9 @@ Symlink each config to where the tool expects it:
 ```sh
 ln -s ~/.dotfiles/tmux ~/.config/tmux
 ln -s ~/.dotfiles/nvim ~/.config/nvim
+ln -s ~/.dotfiles/alacritty ~/.config/alacritty
 ln -s ~/.dotfiles/starship/starship.toml ~/.config/starship.toml
-ln -s ~/.dotfiles/git/.gitconfig ~/.gitconfig
+ln -s ~/.dotfiles/git ~/.config/git
 ln -s ~/.dotfiles/pi/agent/* ~/.pi/agent/
 ln -s ~/.dotfiles/claude/* ~/.claude/
 ln -s ~/.dotfiles/agents ~/.agents
