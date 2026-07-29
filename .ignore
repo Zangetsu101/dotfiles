@@ -1,0 +1,2 @@
+# Keep local issue files visible to tools that respect ignore files.
+!.scratch/
