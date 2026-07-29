@@ -1,30 +1,63 @@
 # Issue tracker: Local Markdown
 
-Issues and specs for this repo live as markdown files in `.scratch/`.
+Issues, specs, and maps for this repo live as Markdown files in `.scratch/`; skills and humans author prose directly in Markdown.
 
-## Conventions
+Load the `local-issue-tracker` skill for structured issue operations, its CLI invocation, and built-in help.
 
-- One feature per directory: `.scratch/<feature-slug>/`
-- The spec is `.scratch/<feature-slug>/spec.md`
-- Implementation issues are `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`
-- Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
-- Comments and conversation history append to the bottom of the file under a `## Comments` heading
+Use the CLI for:
+- issue creation
+- triage
+- blockers
+- claims
+- releases
+- resolution
+- queries
+- validation
 
-## When a skill says "publish to the issue tracker"
+Use ordinary Markdown edits for:
+- specs
+- maps
+- descriptions
+- questions
+- acceptance criteria
+- answers
+- comments
+- decision pointers
 
-Create a new file under `.scratch/<feature-slug>/` (creating the directory if needed).
+## Layout
 
-## When a skill says "fetch the relevant ticket"
+- Effort: `.scratch/<effort>/`
+- Spec: `.scratch/<effort>/spec.md`
+- Map: `.scratch/<effort>/map.md`
+- Issue: `.scratch/<effort>/issues/<NN>-<slug>.md`
+- Stable issue identity: `<effort>/<number>`
 
-Read the file at the referenced path. The user will normally pass the path or the issue number directly.
+The CLI accepts stable identities and resolves current issue paths.
+
+## Managed metadata
+
+Canonical issues carry the skill-management marker and separate triage and lifecycle fields:
+
+```markdown
+# Launch agent windows
+
+<!-- Issue metadata: manage with the local-issue-tracker skill. -->
+Triage: ready-for-agent
+State: open
+Type: task
+Blocked by: 01, 03
+
+## What to build
+...
+```
+- `Triage:` uses the role strings in `triage-labels.md`.
+- `Type:` is optional and records `research`, `prototype`, `grilling`, or `task`.
+- The CLI owns the contiguous metadata block; direct editing remains available for recovery.
 
 ## Wayfinding operations
 
-Used by `/wayfinder`. The **map** is a file with one **child** file per ticket.
+Author Notes, Decisions-so-far, and Fog directly in `.scratch/<effort>/map.md`. To resolve a child issue, author `## Answer`, resolve through the CLI, then append the context pointer to the map directly.
 
-- **Map**: `.scratch/<effort>/map.md` — the Notes / Decisions-so-far / Fog body.
-- **Child ticket**: `.scratch/<effort>/issues/NN-<slug>.md`, numbered from `01`, with the question in the body. A `Type:` line records the ticket type (`research`/`prototype`/`grilling`/`task`); a `Status:` line records `claimed`/`resolved`.
-- **Blocking**: a `Blocked by: NN, NN` line near the top. A ticket is unblocked when every file it lists is `resolved`.
-- **Frontier**: scan `.scratch/<effort>/issues/` for files that are open, unblocked, and unclaimed; first by number wins.
-- **Claim**: set `Status: claimed` and save before any work.
-- **Resolve**: append the answer under an `## Answer` heading, set `Status: resolved`, then append a context pointer (gist + link) to the map's Decisions-so-far in `map.md`.
+## Migration
+
+A maintainer starts migration explicitly through the CLI. Read-only commands identify legacy `Status:` files; setup and adoption leave existing efforts unchanged.
