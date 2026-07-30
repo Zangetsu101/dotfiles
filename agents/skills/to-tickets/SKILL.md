@@ -55,14 +55,14 @@ Ask the user:
 
 Iterate until the user approves the breakdown.
 
-### 5. Publish through the local issue CLI
+### 5. Publish local issues
 
 Load the `local-issue-tracker` skill and use its documented invocation.
 
 1. Author each approved issue body from the template below.
-2. Create every issue through the CLI in dependency order with `ready-for-agent` triage. Record each returned stable identity.
-3. Add the approved blocking edges through CLI blocker operations after every issue has an identity.
-4. Run CLI validation for the effort.
+2. Create every issue in dependency order with `ready-for-agent` triage. Record each returned stable identity.
+3. Add the approved blocking edges after every issue has an identity.
+4. Validate the effort.
 
 When the source is an existing issue, retain its stable identity in each child’s `## Parent` section. Preserve the parent’s content and lifecycle.
 
@@ -85,4 +85,4 @@ The end-to-end behaviour this issue makes work from the user's perspective, rath
 
 Describe behavior and acceptance at a stable abstraction level. When a prototype produced a decision-rich state machine, reducer, schema, or type shape that prose cannot preserve precisely, include only that essential excerpt and identify its prototype source.
 
-Publishing completes when every approved issue exists with `ready-for-agent` triage, every blocker edge matches the approved graph, and CLI validation succeeds.
+Publishing completes when every approved issue exists with `ready-for-agent` triage, every blocker edge matches the approved graph, and validation succeeds.

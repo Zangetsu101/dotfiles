@@ -62,11 +62,11 @@ Each map issue has a stable `<effort>/<number>` identity and this authored body,
 <the decision or investigation this issue resolves>
 ```
 
-Create it through the CLI with one `Type:` value — `research`, `prototype`, `grilling`, or `task` — and triage it `ready-for-agent` for AFK work or `ready-for-human` for HITL work.
+Create it with one `Type:` value — `research`, `prototype`, `grilling`, or `task` — and triage it `ready-for-agent` for AFK work or `ready-for-human` for HITL work.
 
-Use CLI blocker operations for dependencies. The **frontier** is the open, unblocked issues returned by the CLI frontier query; use its triage filter when selecting AFK or HITL work. Claim the chosen issue through the CLI before beginning work so concurrent sessions skip it.
+Use blocker operations for dependencies. The **frontier** is the open, unblocked issues returned by the frontier query; use its triage filter when selecting AFK or HITL work. Claim the chosen issue before beginning work so concurrent sessions skip it.
 
-Author the resolution under `## Answer`, link any created assets there, then use the CLI to resolve the issue.
+Author the resolution under `## Answer`, link any created assets there, then resolve the issue.
 
 ## Issue Types
 
@@ -96,7 +96,7 @@ Fog only ever gathers _toward_ the destination. The destination fixes the scope,
 
 Out-of-scope work never graduates — the frontier stops at the destination — so it returns only if the destination is redrawn, and then as a fresh effort, not a resumption.
 
-Ruling something out of scope is a scoping act, not a step on the route. When an existing issue turns out to sit past the destination, set its triage to `wontfix`, author an answer recording the scope rationale, resolve it through the CLI, and add one linked gist to **Out of scope**. Keep it outside **Decisions so far**, which records the route actually walked.
+Ruling something out of scope is a scoping act, not a step on the route. When an existing issue turns out to sit past the destination, set its triage to `wontfix`, author an answer recording the scope rationale, resolve it, and add one linked gist to **Out of scope**. Keep it outside **Decisions so far**, which records the route actually walked.
 
 ## Invocation
 
@@ -109,7 +109,7 @@ User invokes with a loose idea.
 1. **Name the destination.** Run a `/grilling` and `/domain-modeling` session to pin down what this map is finding its way to — the spec, decision, or change. The destination fixes the scope, so it's settled first.
 2. **Map the frontier.** Grill again, **breadth-first** this time: fan out across the whole space rather than deep on any one thread, surfacing the open decisions and the first steps takeable now. **If this surfaces no fog** — the way to the destination is already clear, the whole journey small enough for one session — you don't need a map. Stop and ask the user how they'd like to proceed.
 3. **Create the map** at `.scratch/<effort>/map.md`: Destination and Notes filled in, Decisions-so-far empty, and the fog sketched into **Not yet specified**.
-4. **Create the issues you can specify now** through the CLI, then wire blocking edges through CLI operations after every issue has an identity. Everything you can't yet specify stays in **Not yet specified**.
+4. **Create the issues you can specify now**, then wire blocking edges after every issue has an identity. Everything you can't yet specify stays in **Not yet specified**.
 5. Stop — charting the map is one session's work; do not also resolve issues.
 
 ### Work through the map
@@ -117,9 +117,9 @@ User invokes with a loose idea.
 User invokes with an effort or map path. An issue is **optional** — without one, you pick the next decision, not the user.
 
 1. Load the **map** as the low-resolution view.
-2. Choose the issue. Use a user-named issue when provided; otherwise query the CLI frontier and take the first issue in order. Apply a triage filter when the invocation specifically requests AFK or HITL work. Claim the issue through the CLI before reading further.
+2. Choose the issue. Use a user-named issue when provided; otherwise query the frontier and take the first issue in order. Apply a triage filter when the invocation specifically requests AFK or HITL work. Claim the issue before reading further.
 3. Resolve it — **zoom as needed**: read related issue bodies on demand and invoke the skills named in `## Notes`. Use `/grilling` and `/domain-modeling` for unresolved human decisions.
-4. Record the resolution: author `## Answer`, resolve the issue through the CLI, and append a context pointer to the map's Decisions-so-far.
-5. Create newly surfaced issues through the CLI and wire their blockers after creation. Graduate newly specifiable fog into those issues and clear it from **Not yet specified**. Move work beyond the destination to **Out of scope** using the scope-resolution procedure above. Update issues invalidated by the decision while they remain open.
+4. Record the resolution: author `## Answer`, resolve the issue, and append a context pointer to the map's Decisions-so-far.
+5. Create newly surfaced issues and wire their blockers after creation. Graduate newly specifiable fog into those issues and clear it from **Not yet specified**. Move work beyond the destination to **Out of scope** using the scope-resolution procedure above. Update issues invalidated by the decision while they remain open.
 
 The user may run unblocked issues in parallel, so expect other sessions to be editing the tracker concurrently.
