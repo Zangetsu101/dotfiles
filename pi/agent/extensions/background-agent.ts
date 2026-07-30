@@ -187,8 +187,8 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       const failed = completion.kind === "exit"
       const status = failed ? `failed with exit code ${completion.exitCode ?? "unknown"}` : "finished its initial task"
       await Promise.all([
-        tmux.run(["set-option", "-t", agent.target, "@pi_agent_status", failed ? "failed" : "settled"]),
-        tmux.run(["set-option", "-t", agent.target, "@pi_task_status", failed ? "failed" : "completed"]),
+        tmux.run(["set-option", "-w", "-t", agent.target, "@pi_agent_status", failed ? "failed" : "settled"]),
+        tmux.run(["set-option", "-w", "-t", agent.target, "@pi_task_status", failed ? "failed" : "completed"]),
       ]).catch(() => undefined)
 
       const summary = `Background agent ${agent.id} (${agent.label}) ${status}.`

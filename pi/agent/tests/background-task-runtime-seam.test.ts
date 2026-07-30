@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { writeFile } from "node:fs/promises"
 import test from "node:test"
 import backgroundAgentExtension from "../extensions/background-agent.ts"
 import backgroundMonitorExtension from "../extensions/background-monitor.ts"
@@ -46,6 +47,30 @@ test("real background extensions create, discover, complete, retain, attach, and
     await runtime.emit("session_shutdown", { reason: "reload" })
     if (previousPane === undefined) delete process.env.TMUX_PANE; else process.env.TMUX_PANE = previousPane
     if (previousTmux === undefined) delete process.env.TMUX; else process.env.TMUX = previousTmux
+    if (previousAgentStatus === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE; else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousAgentStatus
+  }
+})
+
+test("agent completion updates the task-list window status", async () => {
+  const previousPane = process.env.TMUX_PANE
+  const previousAgentStatus = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
+  process.env.TMUX_PANE = "%owner"
+  delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
+  const tmux = new FakeTmuxProcessAdapter()
+  const tasks = new BackgroundTasks(tmux)
+  const runtime = new FakePiRuntime()
+  try {
+    await backgroundAgentExtension(runtime.pi, { tasks, tmux })
+    const result = await runtime.execute("background_agent", { task: "review", label: "review" })
+
+    await writeFile(result.details.statusFile, JSON.stringify({ kind: "settled", output: "done" }))
+    for (let attempt = 0; attempt < 50 && runtime.messages.length < 1; attempt++) await new Promise((resolve) => setTimeout(resolve, 5))
+
+    assert.equal(runtime.messages.length, 1)
+    assert.equal((await tasks.list("%owner"))[0]?.status, "completed")
+  } finally {
+    await runtime.emit("session_shutdown", { reason: "reload" })
+    if (previousPane === undefined) delete process.env.TMUX_PANE; else process.env.TMUX_PANE = previousPane
     if (previousAgentStatus === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE; else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousAgentStatus
   }
 })
