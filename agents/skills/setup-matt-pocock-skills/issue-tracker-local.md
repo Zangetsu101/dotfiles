@@ -2,7 +2,7 @@
 
 Issues, specs, and maps for this repo live as Markdown files in `.scratch/`; skills and humans author prose directly in Markdown.
 
-Load the `local-issue-tracker` skill for structured issue operations, its CLI invocation, and built-in help.
+Load the `local-issue-tracker` skill for structured issue operations and its CLI invocation.
 
 Use the CLI for:
 - issue creation
