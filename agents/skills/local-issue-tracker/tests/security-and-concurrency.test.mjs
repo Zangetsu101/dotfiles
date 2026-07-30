@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, readdir, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { spawn } from 'node:child_process';
+const cli=resolve('agents/skills/local-issue-tracker/local-issue-tracker.mjs');
+async function repo(){const r=await mkdtemp(join(tmpdir(),'tracker-'));await mkdir(join(r,'.git'));return r}
+function run(args,cwd){return new Promise(done=>{const p=spawn(process.execPath,[cli,...args],{cwd});let stdout='',stderr='';p.stdout.on('data',d=>stdout+=d);p.stderr.on('data',d=>stderr+=d);p.on('close',status=>done({status,stdout,stderr}));p.stdin.end()})}
+test('nested discovery, explicit root, exact path, and context bare number work',async()=>{const root=await repo(),other=await repo(),nested=join(root,'a/b');await mkdir(nested,{recursive:true});let r=await run(['create','demo','--title','Nested'],nested);assert.equal(r.status,0,r.stderr);r=await run(['create','other','--title','Override','--root',other],nested);assert.equal(r.status,0,r.stderr);r=await run(['show','.scratch/demo/issues/01-nested.md','--json'],root);assert.equal(JSON.parse(r.stdout).identity,'demo/01');r=await run(['show','1','--json'],join(root,'.scratch/demo/issues'));assert.equal(JSON.parse(r.stdout).identity,'demo/01')});
+test('concurrent creation assigns unique identities and leaves no temporary files',async()=>{const root=await repo();const results=await Promise.all(Array.from({length:8},(_,i)=>run(['create','race','--title',`Issue ${i}`,'--json'],root)));assert.ok(results.every(x=>x.status===0),results.map(x=>x.stderr).join(''));assert.deepEqual(results.map(x=>JSON.parse(x.stdout).identity).sort(),Array.from({length:8},(_,i)=>`race/${String(i+1).padStart(2,'0')}`));assert.equal((await readdir(join(root,'.scratch/race/issues'))).filter(x=>x.includes('.tmp')).length,0)});
+test('unsafe effort and symlink escape are rejected without writing outside',async()=>{const root=await repo(),outside=await mkdtemp(join(tmpdir(),'outside-'));for(const effort of ['../bad','Bad','a/b']){const r=await run(['create',effort,'--title','No'],root);assert.notEqual(r.status,0)}await mkdir(join(root,'.scratch'),{recursive:true});await symlink(outside,join(root,'.scratch/escape'));const r=await run(['create','escape','--title','No'],root);assert.notEqual(r.status,0);assert.deepEqual(await readdir(outside),[])});

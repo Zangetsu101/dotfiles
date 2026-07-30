@@ -1,4 +1,5 @@
 - Pi extension changes: run `npm --prefix pi/agent run check`.
+- Tracker or shared-skill changes: run `npm --prefix pi/agent run check`.
 - Prompt changes (`AGENTS.md`, `CLAUDE.md`, tool metadata) verify:
   - leading words
   - positive phrasing
