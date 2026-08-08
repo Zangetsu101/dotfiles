@@ -1,6 +1,6 @@
 ---
 name: to-tickets
-description: Break a plan, spec, or the current conversation into tracer-bullet issues with explicit blocking edges, then publish them through the local issue tracker.
+description: Break a plan, spec, or the current conversation into a set of tracer-bullet tickets, each declaring its blocking edges, published through the local issue tracker.
 disable-model-invocation: true
 ---
 
@@ -55,13 +55,13 @@ Ask the user:
 
 Iterate until the user approves the breakdown.
 
-### 5. Publish local issues
+### 5. Publish tickets as local issues
 
 Load the `local-issue-tracker` skill and use its documented invocation.
 
-1. Author each approved issue body from the template below.
-2. Create every issue in dependency order with `ready-for-agent` triage. Record each returned stable identity.
-3. Add the approved blocking edges after every issue has an identity.
+1. Author each approved ticket’s issue body from the template below.
+2. Create one issue per ticket in dependency order with `ready-for-agent` triage. Record each returned stable identity.
+3. Add the approved blocking edges after every ticket has an issue identity.
 4. Validate the effort.
 
 When the source is an existing issue, retain its stable identity in each child’s `## Parent` section. Preserve the parent’s content and lifecycle.
@@ -74,7 +74,7 @@ A stable identity or relative Markdown link for the parent issue, when one exist
 
 ## What to build
 
-The end-to-end behaviour this issue makes work from the user's perspective, rather than a layer-by-layer implementation list.
+The end-to-end behaviour this ticket makes work, from the user's perspective — not layer-by-layer implementation.
 
 ## Acceptance criteria
 
@@ -85,4 +85,4 @@ The end-to-end behaviour this issue makes work from the user's perspective, rath
 
 Describe behavior and acceptance at a stable abstraction level. When a prototype produced a decision-rich state machine, reducer, schema, or type shape that prose cannot preserve precisely, include only that essential excerpt and identify its prototype source.
 
-Publishing completes when every approved issue exists with `ready-for-agent` triage, every blocker edge matches the approved graph, and validation succeeds.
+Publishing completes when every approved ticket exists as an issue with `ready-for-agent` triage, every blocker edge matches the approved graph, and validation succeeds.
