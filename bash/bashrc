@@ -1,0 +1,12 @@
+# Shared interactive Bash configuration.
+
+set -o vi
+
+_dotfiles_bash_dir="${BASH_SOURCE[0]%/*}"
+source "$_dotfiles_bash_dir/aliases.bash"
+source "$_dotfiles_bash_dir/tools.bash"
+source "$_dotfiles_bash_dir/ssh-agent.bash"
+unset _dotfiles_bash_dir
+
+# Keep machine- and employer-specific settings outside the repository.
+[ -f "$HOME/.config/bash/local.bash" ] && source "$HOME/.config/bash/local.bash"
