@@ -4,7 +4,7 @@ description: Turn the current conversation into a spec and publish it to the pro
 disable-model-invocation: true
 ---
 
-This skill takes the current conversation context and codebase understanding and produces a spec (you may know this document as a PRD). Do NOT interview the user — just synthesize what you already know.
+This skill takes the current conversation context and codebase understanding and produces a spec. Do NOT interview the user — just synthesize what you already know.
 
 Read the repository’s issue-tracker and triage-role docs before publishing.
 

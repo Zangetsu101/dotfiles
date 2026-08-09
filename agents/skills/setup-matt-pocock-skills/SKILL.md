@@ -22,18 +22,23 @@ Read the repository’s existing configuration:
 - `CONTEXT.md` and `CONTEXT-MAP.md`;
 - root and context-specific `docs/adr/` directories;
 - `docs/agents/`;
-- `.scratch/`.
+- `.scratch/`;
+- monorepo signals: `pnpm-workspace.yaml`, a `workspaces` field in `package.json`, or populated `packages/*/src` directories.
 
-Account for the instruction file already in use, any existing `## Agent skills` block, the current domain layout, prior generated docs, and local efforts that setup must preserve.
+Account for the instruction file already in use, any existing `## Agent skills` block, the current domain layout, prior generated docs, local efforts that setup must preserve.
 
-### 2. Confirm the domain layout
+### 2. Select the domain layout
 
-Summarise what is present and missing, including the fixed local tracker and canonical triage vocabulary. Then explain why engineering skills need domain language and ADR locations, and ask the user to choose one layout:
+Summarise what is present and missing, including the fixed local tracker and canonical triage vocabulary.
 
-- **Single-context** — one `CONTEXT.md` plus `docs/adr/` at the repository root. Most repositories use this.
+When exploration found no monorepo signals, select **single-context** without asking: one `CONTEXT.md` plus `docs/adr/` at the repository root. This fits almost every repository.
+
+When exploration found monorepo signals, explain why engineering skills need domain language and ADR locations, then ask the user to choose:
+
+- **Single-context** — one `CONTEXT.md` plus `docs/adr/` at the repository root.
 - **Multi-context** — a root `CONTEXT-MAP.md` points to per-context `CONTEXT.md` files.
 
-Wait for the user’s answer before drafting changes. This step completes when the user selects a layout.
+Wait for the user’s answer only when monorepo signals require a choice. This step completes when the layout is selected.
 
 ### 3. Confirm the generated configuration
 
