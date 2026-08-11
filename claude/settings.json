@@ -1,5 +1,4 @@
 {
-  "model": "opus",
   "permissions": {
     "deny": [
       "EnterPlanMode",
@@ -17,11 +16,9 @@
       "CronList"
     ]
   },
-  "disableBundledSkills": true,
-  "disableWorkflows": true,
-  "disableRemoteControl": true,
+  "model": "opus",
   "disableClaudeAiConnectors": true,
-  "disableArtifact": true,
+  "disableBundledSkills": true,
   "hooks": {
     "PreToolUse": [
       {
@@ -66,6 +63,9 @@
       }
     ]
   },
+  "disableRemoteControl": true,
+  "disableWorkflows": true,
+  "disableArtifact": true,
   "statusLine": {
     "type": "command",
     "command": "bash \"/home/tameem/.claude/hooks/statusline.sh\""
@@ -75,11 +75,12 @@
     "frontend-design@claude-plugins-official": true
   },
   "tui": "default",
-  "skipDangerousModePermissionPrompt": true,
-  "editorMode": "vim",
-  "voiceEnabled": true,
   "voice": {
     "enabled": true,
     "mode": "hold"
-  }
+  },
+  "autoMemoryEnabled": false,
+  "skipDangerousModePermissionPrompt": true,
+  "editorMode": "vim",
+  "voiceEnabled": true
 }
