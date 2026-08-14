@@ -65,7 +65,7 @@ ln -s ~/.dotfiles/agents/skills ~/.claude/skills
 npm --prefix ~/.dotfiles/pi/agent install
 ```
 
-Put machine- or employer-specific Bash settings in `~/.config/bash/local.bash`;
-the shared Bash configuration loads that file when present.
+Put machine- or employer-specific Bash settings in `bash/bashrc.local`;
+the shared Bash configuration loads this gitignored file when present.
 
 > `claude/skills` is itself a symlink to `agents/skills/`, so Claude Code and any other agent can share the same skills.
