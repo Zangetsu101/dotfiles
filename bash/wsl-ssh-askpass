@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+windows_script=$(wslpath -w "$script_dir/wsl-ssh-askpass.ps1")
+
+exec powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+    -File "$windows_script" "${1:-Enter your SSH key passphrase}"
