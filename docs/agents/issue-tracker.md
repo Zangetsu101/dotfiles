@@ -57,7 +57,3 @@ Blocked by: 01, 03
 ## Wayfinding operations
 
 Author Notes, Decisions-so-far, and Fog directly in `.scratch/<effort>/map.md`. To resolve a child issue, author `## Answer`, resolve through the CLI, then append the context pointer to the map directly.
-
-## Migration
-
-A maintainer starts migration explicitly through the CLI. Read-only commands identify legacy `Status:` files; setup and adoption leave existing efforts unchanged.
