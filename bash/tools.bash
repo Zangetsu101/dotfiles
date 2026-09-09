@@ -33,4 +33,13 @@ fi
 command -v kubectl >/dev/null && source <(kubectl completion bash)
 command -v starship >/dev/null && eval "$(starship init bash)"
 
+pass() {
+    if [[ ${1-} == generate && ${2-} == -p ]]; then
+        shift 2
+        PASSWORD_STORE_CHARACTER_SET='[:digit:]' command pass generate "$@"
+    else
+        command pass "$@"
+    fi
+}
+
 unset -f path_prepend path_append
