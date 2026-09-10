@@ -24,11 +24,54 @@ return {
   config = function()
     local telescope = require('telescope')
     local actions = require('telescope.actions')
+    local utils = require('telescope.utils')
+    local action_state = require('telescope.actions.state')
+    local action_layout = require('telescope.actions.layout')
+
+    -- Path display styles cycled with <C-g> while a picker is open.
+    local path_display_styles = {
+      {},               -- lua/plugins/telescope.lua
+      { shorten = 3 },  -- lua/plu/telescope.lua
+      { shorten = 1 },  -- l/p/telescope.lua
+      { 'tail' },       -- telescope.lua
+    }
+    local path_display_index = 1
+
+    -- Resolved per redraw, so refreshing the picker re-renders every path.
+    local function path_display(opts, path)
+      local saved = rawget(opts, 'path_display')
+      opts.path_display = path_display_styles[path_display_index]
+      local ok, display, style = pcall(utils.transform_path, opts, path)
+      opts.path_display = saved
+      if not ok then
+        return path, {}
+      end
+      return display, style
+    end
+
+    local function cycle_path_display(prompt_bufnr)
+      path_display_index = path_display_index % #path_display_styles + 1
+      local picker = action_state.get_current_picker(prompt_bufnr)
+      if picker then
+        picker:refresh(nil, { reset_prompt = false })
+      end
+    end
 
     telescope.setup {
       defaults = {
         file_ignore_patterns = {
           "^.git/"
+        },
+        path_display = path_display,
+        mappings = {
+          i = {
+            ['<C-g>'] = cycle_path_display,
+            ['<M-p>'] = action_layout.toggle_preview,
+          },
+          n = {
+            ['<C-g>'] = cycle_path_display,
+            ['<M-p>'] = action_layout.toggle_preview,
+          },
         }
       },
       pickers = {
