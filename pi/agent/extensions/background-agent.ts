@@ -23,7 +23,7 @@ const STATUS_FILE_ENV = "PI_BACKGROUND_AGENT_STATUS_FILE"
 const AGENT_LABEL_ENV = "PI_BACKGROUND_AGENT_LABEL"
 const MAX_RESULT_CHARS = 50_000
 const DELEGATED_TASK_INSTRUCTION =
-  "Delegated task: Complete all work—including skill delegation steps—in this session."
+  "Delegated task: Complete all work, including skill delegation steps, in this session."
 
 export function delegatedTaskPrompt(task: string): string {
   return `${DELEGATED_TASK_INSTRUCTION}\n\n${task}`

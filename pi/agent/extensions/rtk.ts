@@ -1,9 +1,9 @@
-// RTK Pi extension — rewrites bash commands to use rtk for token savings.
+// RTK Pi extension: rewrites bash commands to use rtk for token savings.
 // Requires: rtk >= 0.23.0 in PATH.
 //
 // This is a thin delegating extension: all rewrite logic lives in `rtk rewrite`,
 // which is the single source of truth (src/discover/registry.rs).
-// To add or change rewrite rules, edit the Rust registry — not this file.
+// To add or change rewrite rules, edit the Rust registry and not this file.
 //
 // Exit code contract for `rtk rewrite`:
 //   0 + stdout  Rewrite found → mutate command
@@ -42,7 +42,7 @@ export default async function (pi: ExtensionAPI) {
   // Probe rtk version at load time; disables extension if missing or too old.
   const ver = await pi.exec("rtk", ["--version"], { timeout: REWRITE_TIMEOUT_MS })
   if (ver.code !== 0) {
-    console.warn("[rtk] rtk binary not found in PATH — extension disabled")
+    console.warn("[rtk] rtk binary not found in PATH: extension disabled")
     return
   }
 
@@ -51,7 +51,7 @@ export default async function (pi: ExtensionAPI) {
   if (parsed) {
     const [major, minor] = parsed
     if (major === 0 && minor < MIN_SUPPORTED_RTK_MINOR) {
-      console.warn(`[rtk] rtk ${ver.stdout.trim()} is too old (need >= 0.23.0) — extension disabled`)
+      console.warn(`[rtk] rtk ${ver.stdout.trim()} is too old (need >= 0.23.0): extension disabled`)
       return
     }
   }

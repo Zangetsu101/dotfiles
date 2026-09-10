@@ -35,8 +35,8 @@ When exploration found no monorepo signals, select **single-context** without as
 
 When exploration found monorepo signals, explain why engineering skills need domain language and ADR locations, then ask the user to choose:
 
-- **Single-context** — one `CONTEXT.md` plus `docs/adr/` at the repository root.
-- **Multi-context** — a root `CONTEXT-MAP.md` points to per-context `CONTEXT.md` files.
+- **Single-context** uses one `CONTEXT.md` plus `docs/adr/` at the repository root.
+- **Multi-context** uses a root `CONTEXT-MAP.md` points to per-context `CONTEXT.md` files.
 
 Wait for the user’s answer only when monorepo signals require a choice. This step completes when the layout is selected.
 
