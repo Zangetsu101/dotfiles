@@ -141,26 +141,6 @@
       "installedAt": "2026-08-09T05:50:39.000Z",
       "updatedAt": "2026-08-09T05:50:39.000Z"
     },
-    "to-spec": {
-      "source": "mattpocock/skills",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/mattpocock/skills.git",
-      "skillPath": "skills/engineering/to-spec/SKILL.md",
-      "skillFolderHash": "dc32a36159f99c854cb470f371106cd38513a15f",
-      "pluginName": "mattpocock-skills",
-      "installedAt": "2026-08-09T05:50:39.000Z",
-      "updatedAt": "2026-08-09T05:50:39.000Z"
-    },
-    "to-tickets": {
-      "source": "mattpocock/skills",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/mattpocock/skills.git",
-      "skillPath": "skills/engineering/to-tickets/SKILL.md",
-      "skillFolderHash": "80c1bedbdaa72a4abd524055013accb4fe0ea8c4",
-      "pluginName": "mattpocock-skills",
-      "installedAt": "2026-08-09T05:50:39.000Z",
-      "updatedAt": "2026-08-09T05:50:39.000Z"
-    },
     "wait-what": {
       "source": "mattpocock/skills",
       "sourceType": "github",

@@ -9,7 +9,7 @@
 
 ### Issue tracker
 
-Issues are tracked as local markdown files under `.scratch/`; pull requests are not a triage surface. See `docs/agents/issue-tracker.md`.
+Issues are tracked as local markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
