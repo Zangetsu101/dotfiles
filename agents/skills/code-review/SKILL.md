@@ -55,13 +55,24 @@ Each smell reads *what it is* → *how to fix*; match it against the diff:
 - **Middle Man**: a class or function that mostly just delegates onward. → cut it, call the real target direct.
 - **Refused Bequest**: a subclass or implementer that ignores or overrides most of what it inherits. → drop the inheritance, use composition.
 
+The Standards axis also reviews every comment and suppression touched by the diff against this **comment baseline**:
+
+- **Narration**: a comment restates what the code already says. → delete it.
+- **Our-code surprise**: a comment explains surprising behavior in code the team controls. → rename, extract, type, or restructure until the code expresses it.
+- **Workaround**: a comment justifies a guard or detour around a local design problem. → fix the root cause and remove the workaround.
+- **Unenforced constraint**: a comment says `do not remove`, `do not change`, or records another rule the codebase can enforce. → encode it in a type, runtime check, test, or CI lint, then delete the comment.
+- **Suppression**: `eslint-disable`, `@ts-ignore`, `@ts-expect-error`, or an equivalent hides a correctness or safety check. → fix the cause and remove the suppression. Keep a suppression when the rule is demonstrably faulty, stylistic, or inapplicable.
+- **External knowledge**: preserve legal headers, public API contracts, issue or RFC links that carry necessary context, and non-obvious behavior forced by a dependency, platform, vendor, or protocol the team cannot change.
+
+Treat comment findings as judgement calls unless a documented repo standard makes them hard violations. Each finding must name the comment or suppression and recommend deletion, code reshaping, executable enforcement, or preservation. An explanation of intent alone does not prove that a comment belongs; the reviewer must identify the external knowledge the code cannot express.
+
 ### 4. Spawn both sub-agents in parallel
 
 **Standards sub-agent prompt** should include:
 
 - The full diff command and commit list.
-- The list of standards-source files you found in step 3, **plus the smell baseline from step 3** pasted in full (the sub-agent has no other access to it).
-- The brief: "Report, per file/hunk where relevant, (a) every place the diff violates a documented standard: cite the standard (file + the rule); and (b) any baseline smell you spot: name it and quote the hunk. Distinguish hard violations from judgement calls: documented-standard breaches can be hard, but baseline smells are always judgement calls, and a documented repo standard overrides the baseline. Skip anything tooling enforces. Under 400 words."
+- The list of standards-source files you found in step 3, **plus the smell and comment baselines from step 3** pasted in full (the sub-agent has no other access to them).
+- The brief: "Report, per file/hunk where relevant, (a) every place the diff violates a documented standard: cite the standard (file + the rule); (b) any baseline smell you spot: name it and quote the hunk; and (c) every touched comment or suppression that fails the comment baseline: quote it and name the required response. Distinguish hard violations from judgement calls: documented-standard breaches can be hard, but baseline findings are always judgement calls, and a documented repo standard overrides the baselines. Skip anything tooling enforces. Under 400 words."
 
 **Spec sub-agent prompt** should include:
 
