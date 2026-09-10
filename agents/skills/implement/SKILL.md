@@ -10,6 +10,8 @@ Use /tdd where possible, at pre-agreed seams.
 
 Run typechecking regularly, single test files regularly, and the full test suite once at the end.
 
-Once done, use /code-review to review the work.
+Once the implementation passes, use /deslop to clean the diff. Rerun the affected checks after its edits.
+
+Then use /code-review to review the cleaned work.
 
 Commit your work to the current branch.

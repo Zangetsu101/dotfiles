@@ -1,9 +1,7 @@
 - Pi extension changes: run `npm --prefix pi/agent run check`.
 - Tracker or shared-skill changes: run `npm --prefix pi/agent run check`.
-- Prompt changes (`AGENTS.md`, `CLAUDE.md`, tool metadata) verify:
-  - leading words
-  - positive phrasing
-  - observable required action (dead man's rule)
+- User-facing prose: before sending it, use `/unslop`.
+- Agent-facing documents: before creating or editing a skill, `AGENTS.md`, `CLAUDE.md`, tool metadata, or a document they point to, use `/writing-for-agents`.
 
 ## Agent skills
 
