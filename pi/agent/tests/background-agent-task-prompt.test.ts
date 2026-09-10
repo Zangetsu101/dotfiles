@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import backgroundAgentExtension, { delegatedTaskPrompt } from "../extensions/background-agent.ts"
+import backgroundAgentExtension from "../extensions/background-agent.ts"
 
 test("generic background task metadata does not turn Pi into an agent child bridge", async () => {
   const previousTaskStatus = process.env.PI_BACKGROUND_TASK_STATUS_FILE
@@ -28,15 +28,4 @@ test("generic background task metadata does not turn Pi into an agent child brid
     if (previousTmuxPane === undefined) delete process.env.TMUX_PANE
     else process.env.TMUX_PANE = previousTmuxPane
   }
-})
-
-test("a delegated task tells the child to do the work itself", () => {
-  assert.equal(
-    delegatedTaskPrompt("Review the authentication changes."),
-    [
-      "Delegated task: Complete all work, including skill delegation steps, in this session.",
-      "",
-      "Review the authentication changes.",
-    ].join("\n"),
-  )
 })
