@@ -1,7 +1,4 @@
 - Pi extension changes: run `npm --prefix pi/agent run check`.
-- Tracker or shared-skill changes: run `npm --prefix pi/agent run check`.
-- User-facing prose: before sending it, use `/unslop`.
-- Agent-facing documents: before creating or editing a skill, `AGENTS.md`, `CLAUDE.md`, tool metadata, or a document they point to, use `/writing-for-agents`.
 
 ## Agent skills
 
