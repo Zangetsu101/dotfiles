@@ -8,5 +8,3 @@ Return one evidence packet containing:
 - a direct citation to the primary source that supports it;
 - any qualification or material uncertainty; and
 - any unresolved question.
-
-Return evidence rather than report-ready narrative. Complete the packet in this session and leave repository files unchanged unless the assignment explicitly names a file you own.
