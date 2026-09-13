@@ -1,5 +1,6 @@
-import { execFile } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
 import { basename, dirname } from "node:path"
+import { access, open } from "node:fs/promises"
 import { promisify } from "node:util"
 import { watch, type FSWatcher } from "node:fs"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
@@ -107,6 +108,39 @@ function currentTmuxPane(): string {
   return process.env.TMUX_PANE ?? ""
 }
 
+function overrunFile(statusFile: string): string {
+  return `${statusFile}.overrun`
+}
+
+function scheduleDeadline(statusFile: string, expectedCompletionAt: number): void {
+  const script = `
+const fs = require("node:fs")
+const [statusFile, markerFile, deadline] = process.argv.slice(1)
+setTimeout(() => {
+  if (fs.existsSync(statusFile)) return
+  try { fs.writeFileSync(markerFile, deadline, { flag: "wx", mode: 0o600 }) } catch (error) {
+    if (error.code !== "EEXIST") throw error
+  }
+}, Math.max(0, Number(deadline) - Date.now()))
+`
+  const child = spawn(process.execPath, ["-e", script, statusFile, overrunFile(statusFile), String(expectedCompletionAt)], {
+    detached: true,
+    stdio: "ignore",
+  })
+  child.unref()
+}
+
+async function claimOverrun(statusFile: string): Promise<boolean> {
+  try {
+    await access(overrunFile(statusFile))
+    const claim = await open(`${overrunFile(statusFile)}.notified`, "wx", 0o600)
+    await claim.close()
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function listAgents(tasks: BackgroundTasks, tmux: TmuxProcessAdapter, owner?: string): Promise<AgentSession[]> {
   const generic = (await tasks.list(owner)).filter((task) => task.storageMode !== "legacy" && task.kind === "agent")
   let output = ""
@@ -163,17 +197,23 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   if (depth >= MAX_AGENT_DEPTH) return
 
   const watchers = new Map<string, FSWatcher>()
-  const checkInTimers = new Map<string, NodeJS.Timeout>()
   let agentsCache = await listAgents(tasks, tmux, currentTmuxPane())
   let shuttingDown = false
 
   const monitor = (agent: AgentSession) => {
     if (watchers.has(agent.id)) return
 
-    if (agent.expectedCompletionAt > 0) {
-      const timer = setTimeout(async () => {
-        checkInTimers.delete(agent.id)
-        if (shuttingDown) return
+    const activity: BackgroundActivity = { id: `background-agent:${agent.id}`, source: "background_agent", label: agent.label }
+    pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
+    let completed = false
+    let consuming = false
+    let consumingOverrun = false
+    const consumeOverrun = async () => {
+      if (completed || consumingOverrun || shuttingDown) return
+      consumingOverrun = true
+      try {
+        if (!(await claimOverrun(agent.statusFile))) return
+        if (await tasks.completion(agent)) return
         const current = (await listAgents(tasks, tmux, agent.owner)).find((candidate) => candidate.id === agent.id)
         if (!current || current.status !== "running") return
         pi.sendMessage(
@@ -184,14 +224,10 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
           },
           { deliverAs: "followUp", triggerTurn: true },
         )
-      }, Math.max(0, agent.expectedCompletionAt - Date.now()))
-      checkInTimers.set(agent.id, timer)
+      } finally {
+        consumingOverrun = false
+      }
     }
-
-    const activity: BackgroundActivity = { id: `background-agent:${agent.id}`, source: "background_agent", label: agent.label }
-    pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
-    let completed = false
-    let consuming = false
     const consume = async () => {
       if (completed || consuming || shuttingDown) return
       consuming = true
@@ -205,8 +241,6 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       completed = true
       watchers.get(agent.id)?.close()
       watchers.delete(agent.id)
-      clearTimeout(checkInTimers.get(agent.id))
-      checkInTimers.delete(agent.id)
       pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
       const failed = completion.kind === "exit" || completion.stopReason === "error"
       const status = failed
@@ -241,10 +275,18 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     }
 
     const watcher = watch(dirname(agent.statusFile), (_event, filename) => {
-      if (!filename || filename.toString() === basename(agent.statusFile)) void consume()
+      if (!filename) {
+        void consume()
+        void consumeOverrun()
+        return
+      }
+      const changed = filename.toString()
+      if (changed === basename(agent.statusFile)) void consume()
+      if (changed === basename(overrunFile(agent.statusFile))) void consumeOverrun()
     })
     watchers.set(agent.id, watcher)
     void consume()
+    void consumeOverrun()
   }
 
   for (const agent of agentsCache) {
@@ -295,6 +337,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       const agent: AgentSession = { ...task, kind: "agent", model, thinking, expectedCompletionAt }
       agentsCache.push(agent)
       pi.events.emit(BACKGROUND_TASK_CREATED, task)
+      scheduleDeadline(statusFile, expectedCompletionAt)
       monitor(agent)
 
       return {
@@ -313,7 +356,5 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     shuttingDown = true
     for (const watcher of watchers.values()) watcher.close()
     watchers.clear()
-    for (const timer of checkInTimers.values()) clearTimeout(timer)
-    checkInTimers.clear()
   })
 }

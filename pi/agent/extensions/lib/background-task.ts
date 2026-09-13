@@ -115,7 +115,7 @@ export class BackgroundTasks {
     }
     return removed
   }
-  async completion(task: BackgroundTask): Promise<TaskCompletion | undefined> { try { return JSON.parse(await readFile(task.statusFile, "utf8")) as TaskCompletion } catch { return undefined } }
+  async completion(task: Pick<BackgroundTask, "statusFile">): Promise<TaskCompletionRecord | undefined> { try { return JSON.parse(await readFile(task.statusFile, "utf8")) as TaskCompletionRecord } catch { return undefined } }
   async claimCompletion(task: BackgroundTask): Promise<TaskCompletion | undefined> { return this.claimCompletionRecord(task) as Promise<TaskCompletion | undefined> }
   async claimCompletionRecord(task: Pick<BackgroundTask, "statusFile">): Promise<TaskCompletionRecord | undefined> { let completion: TaskCompletionRecord; try { completion = JSON.parse(await readFile(task.statusFile, "utf8")) as TaskCompletionRecord } catch { return undefined } try { const claim = await open(`${task.statusFile}.notified`, "wx", 0o600); await claim.close(); return completion } catch { return undefined } }
   async resolveReference(reference: string, owner: string): Promise<{ kind: "found"; task: BackgroundTask } | { kind: "unknown" } | { kind: "ambiguous" }> { const scoped = await this.list(owner); const exact = scoped.find((task) => task.id === reference || task.target === reference); if (exact) return { kind: "found", task: exact }; const normalized = reference.toLowerCase(); const labels = scoped.filter((task) => task.label.toLowerCase() === normalized || safeTaskLabel(task.label) === normalized); if (labels.length === 1) return { kind: "found", task: labels[0]! }; return { kind: labels.length > 1 ? "ambiguous" : "unknown" } }
