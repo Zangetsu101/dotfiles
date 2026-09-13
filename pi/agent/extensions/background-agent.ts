@@ -33,6 +33,7 @@ type AgentSession = {
   status: string
   model: string
   thinking: string
+  expectedCompletionAt: number
   parent: string
   owner: string
   statusFile: string
@@ -82,6 +83,7 @@ const directTmux: TmuxProcessAdapter = {
 type BackgroundAgentOptions = {
   tasks?: BackgroundTasks
   tmux?: TmuxProcessAdapter
+  millisecondsPerMinute?: number
 }
 
 function piInvocation(): { command: string; args: string[] } {
@@ -108,11 +110,11 @@ function currentTmuxPane(): string {
 async function listAgents(tasks: BackgroundTasks, tmux: TmuxProcessAdapter, owner?: string): Promise<AgentSession[]> {
   const generic = (await tasks.list(owner)).filter((task) => task.storageMode !== "legacy" && task.kind === "agent")
   let output = ""
-  try { output = await tmux.run(["list-windows", "-a", "-F", "#{session_name}:#{window_name}\t#{@pi_agent_status}\t#{@pi_agent_model}\t#{@pi_agent_thinking}"]) } catch {}
-  const details = new Map(output.split("\n").filter(Boolean).map((line) => { const [target, status, model, thinking] = line.split("\t"); return [target, { status, model, thinking }] }))
+  try { output = await tmux.run(["list-windows", "-a", "-F", "#{session_name}:#{window_name}\t#{@pi_agent_status}\t#{@pi_agent_model}\t#{@pi_agent_thinking}\t#{@pi_agent_expected_completion_at}"]) } catch {}
+  const details = new Map(output.split("\n").filter(Boolean).map((line) => { const [target, status, model, thinking, expectedCompletionAt] = line.split("\t"); return [target, { status, model, thinking, expectedCompletionAt }] }))
   return generic.map((task) => {
     const detail = details.get(task.target)
-    return { ...task, kind: "agent" as const, status: detail?.status || task.status, model: detail?.model || "", thinking: detail?.thinking || "" }
+    return { ...task, kind: "agent" as const, status: detail?.status || task.status, model: detail?.model || "", thinking: detail?.thinking || "", expectedCompletionAt: Number(detail?.expectedCompletionAt) || 0 }
   })
 }
 
@@ -153,6 +155,7 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
 export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions = {}) {
   const tasks = options.tasks ?? new BackgroundTasks(options.tmux ?? systemTmux)
   const tmux = options.tmux ?? directTmux
+  const millisecondsPerMinute = options.millisecondsPerMinute ?? 60_000
   const childStatusFile = process.env[STATUS_FILE_ENV]
   const parsedDepth = Number.parseInt(process.env[DEPTH_ENV] ?? "", 10)
   const depth = childStatusFile ? (Number.isFinite(parsedDepth) ? parsedDepth : 1) : 0
@@ -160,11 +163,30 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   if (depth >= MAX_AGENT_DEPTH) return
 
   const watchers = new Map<string, FSWatcher>()
+  const checkInTimers = new Map<string, NodeJS.Timeout>()
   let agentsCache = await listAgents(tasks, tmux, currentTmuxPane())
   let shuttingDown = false
 
   const monitor = (agent: AgentSession) => {
     if (watchers.has(agent.id)) return
+
+    if (agent.expectedCompletionAt > 0) {
+      const timer = setTimeout(async () => {
+        checkInTimers.delete(agent.id)
+        if (shuttingDown) return
+        const current = (await listAgents(tasks, tmux, agent.owner)).find((candidate) => candidate.id === agent.id)
+        if (!current || current.status !== "running") return
+        pi.sendMessage(
+          {
+            customType: "background-agent-check-in",
+            content: `Background agent ${agent.id} (${agent.label}) has worked past its expected completion time.`,
+            display: true,
+          },
+          { deliverAs: "followUp", triggerTurn: true },
+        )
+      }, Math.max(0, agent.expectedCompletionAt - Date.now()))
+      checkInTimers.set(agent.id, timer)
+    }
 
     const activity: BackgroundActivity = { id: `background-agent:${agent.id}`, source: "background_agent", label: agent.label }
     pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
@@ -183,6 +205,8 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       completed = true
       watchers.get(agent.id)?.close()
       watchers.delete(agent.id)
+      clearTimeout(checkInTimers.get(agent.id))
+      checkInTimers.delete(agent.id)
       pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
       const failed = completion.kind === "exit" || completion.stopReason === "error"
       const status = failed
@@ -236,13 +260,13 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     promptGuidelines: [
       "Delegated Pi work: use background_agent so the user can inspect it.",
       "After background_agent starts: continue independent work, or return control to the user while waiting for its automatic completion notification.",
-      "background_agent live progress or suspected stalls: attach to the background agent and inspect its session.",
-      "background_agent missing completion notifications: inspect the background agent's task status and session.",
+      "background_agent live progress or suspected stalls: attach to the background agent and inspect its session."
     ],
     parameters: Type.Object({
       task: Type.String({ description: "Task for the background Pi agent" }),
       label: Type.Optional(Type.String({ description: "Short human-readable label" })),
       cwd: Type.Optional(Type.String({ description: "Working directory; defaults to the current directory" })),
+      expectedCompletionMinutes: Type.Number({ minimum: 1, description: "Expected task duration in minutes; triggers a check-in if the agent exceeds it" }),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -254,6 +278,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       const invocation = piInvocation()
       const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "default"
       const thinking = pi.getThinkingLevel()
+      const expectedCompletionAt = Date.now() + params.expectedCompletionMinutes * millisecondsPerMinute
       const piArgs = [...invocation.args, "--name", `agent: ${label}`]
 
       if (ctx.model) piArgs.push("--model", model)
@@ -264,25 +289,22 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         command: invocation.command, args: piArgs, interactiveAfterExit: true,
         statusFileEnv: STATUS_FILE_ENV,
         env: { [AGENT_LABEL_ENV]: label, [DEPTH_ENV]: String(depth + 1), PI_BACKGROUND_AGENT_PARENT: parent },
-        metadata: { "@pi_agent_status": "running", "@pi_agent_model": model, "@pi_agent_thinking": thinking },
+        metadata: { "@pi_agent_status": "running", "@pi_agent_model": model, "@pi_agent_thinking": thinking, "@pi_agent_expected_completion_at": String(expectedCompletionAt) },
       })
       const { id, target, statusFile } = task
-      const agent: AgentSession = { ...task, kind: "agent", model, thinking }
+      const agent: AgentSession = { ...task, kind: "agent", model, thinking, expectedCompletionAt }
       agentsCache.push(agent)
       pi.events.emit(BACKGROUND_TASK_CREATED, task)
       monitor(agent)
 
-      const attach = process.env.TMUX
-        ? `/task attach ${id}`
-        : `tmux attach -t ${target}`
       return {
         content: [
           {
             type: "text",
-            text: `Started background agent: ${label}\nModel: ${model} (${thinking})\nTmux target: ${target}\nAttach with: ${attach}\nReturn from the child with: /task return`,
+            text: `Started background agent: ${label}\nModel: ${model} (${thinking})\nExpected completion: ${params.expectedCompletionMinutes} minutes`,
           },
         ],
-        details: { id, label, target, statusFile },
+        details: { id, label, target, statusFile, expectedCompletionAt },
       }
     },
   })
@@ -291,5 +313,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     shuttingDown = true
     for (const watcher of watchers.values()) watcher.close()
     watchers.clear()
+    for (const timer of checkInTimers.values()) clearTimeout(timer)
+    checkInTimers.clear()
   })
 }

@@ -51,6 +51,54 @@ test("real background extensions create, discover, complete, retain, attach, and
   }
 })
 
+test("agent completion deadline prompts the caller to check in", async () => {
+  const previousPane = process.env.TMUX_PANE
+  const previousAgentStatus = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
+  process.env.TMUX_PANE = "%owner"
+  delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
+  const tmux = new FakeTmuxProcessAdapter()
+  const tasks = new BackgroundTasks(tmux)
+  const runtime = new FakePiRuntime()
+  try {
+    await backgroundAgentExtension(runtime.pi, { tasks, tmux, millisecondsPerMinute: 10 })
+    await runtime.execute("background_agent", { task: "review", label: "review", expectedCompletionMinutes: 1 })
+
+    for (let attempt = 0; attempt < 50 && runtime.messages.length < 1; attempt++) await new Promise((resolve) => setTimeout(resolve, 5))
+
+    assert.equal(runtime.messages.length, 1)
+    assert.equal(runtime.messages[0]?.customType, "background-agent-check-in")
+    assert.match(runtime.messages[0]?.content ?? "", /worked past its expected completion time/)
+  } finally {
+    await runtime.emit("session_shutdown", { reason: "reload" })
+    if (previousPane === undefined) delete process.env.TMUX_PANE; else process.env.TMUX_PANE = previousPane
+    if (previousAgentStatus === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE; else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousAgentStatus
+  }
+})
+
+test("agent completion cancels its deadline check-in", async () => {
+  const previousPane = process.env.TMUX_PANE
+  const previousAgentStatus = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
+  process.env.TMUX_PANE = "%owner"
+  delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
+  const tmux = new FakeTmuxProcessAdapter()
+  const tasks = new BackgroundTasks(tmux)
+  const runtime = new FakePiRuntime()
+  try {
+    await backgroundAgentExtension(runtime.pi, { tasks, tmux, millisecondsPerMinute: 30 })
+    const result = await runtime.execute("background_agent", { task: "review", label: "review", expectedCompletionMinutes: 1 })
+    await tmux.complete(result.details.target, "completed", "done")
+    for (let attempt = 0; attempt < 50 && runtime.messages.length < 1; attempt++) await new Promise((resolve) => setTimeout(resolve, 5))
+    await new Promise((resolve) => setTimeout(resolve, 40))
+
+    assert.equal(runtime.messages.length, 1)
+    assert.equal(runtime.messages[0]?.customType, "background-agent")
+  } finally {
+    await runtime.emit("session_shutdown", { reason: "reload" })
+    if (previousPane === undefined) delete process.env.TMUX_PANE; else process.env.TMUX_PANE = previousPane
+    if (previousAgentStatus === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE; else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousAgentStatus
+  }
+})
+
 test("agent completion updates the task-list window status", async () => {
   const previousPane = process.env.TMUX_PANE
   const previousAgentStatus = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
