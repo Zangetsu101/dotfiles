@@ -59,7 +59,7 @@ test("real tmux tasks preserve the child terminal while capturing output", async
     assert.deepEqual(await tasks.completion(task), { status: "completed", exitCode: 0 })
     assert.match(await readFile(task.outputFile!, "utf8"), /interactive-tty/)
   } finally {
-    await tasks.cleanup([{ ...task, status: "completed" }])
+    assert.equal(await tasks.cleanup([{ ...task, status: "completed" }]), 1)
   }
 })
 

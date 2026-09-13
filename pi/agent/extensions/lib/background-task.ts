@@ -100,7 +100,7 @@ export class BackgroundTasks {
     const owners = new Set(tasks.map((task) => task.owner))
     for (const selected of tasks) {
       const current = (await this.list(selected.owner)).find((candidate) => candidate.id === selected.id && candidate.storageMode === selected.storageMode)
-      if (!current || (current.storageMode === "hub" && current.status === "running")) continue
+      if (!current || (current.storageMode === "hub" && current.status === "running" && selected.status === "running")) continue
       try {
         await this.tmux.run(current.storageMode === "legacy" ? ["kill-session", "-t", current.target] : ["kill-window", "-t", current.target])
         removed++
