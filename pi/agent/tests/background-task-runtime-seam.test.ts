@@ -64,6 +64,10 @@ test("agent completion updates the task-list window status", async () => {
     await runtime.emit("session_start", { reason: "startup" })
     await backgroundAgentExtension(runtime.pi, { tasks, tmux })
     const result = await runtime.execute("background_agent", { task: "review", label: "review" })
+    const childCommand = tmux.hubs()[0]?.tasks[0]?.command ?? []
+    assert.ok(childCommand.includes("PI_BACKGROUND_AGENT_DEPTH=1"))
+    assert.ok(childCommand.includes("review"))
+    assert.equal(childCommand.some((argument) => argument.includes("Another agent delegated")), false)
 
     await writeFile(result.details.statusFile, JSON.stringify({ kind: "settled", output: "done" }))
     for (let attempt = 0; attempt < 50 && runtime.messages.length < 1; attempt++) await new Promise((resolve) => setTimeout(resolve, 5))

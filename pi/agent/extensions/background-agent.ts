@@ -21,14 +21,10 @@ import {
 
 const execFileAsync = promisify(execFile)
 const STATUS_FILE_ENV = "PI_BACKGROUND_AGENT_STATUS_FILE"
+const DEPTH_ENV = "PI_BACKGROUND_AGENT_DEPTH"
 const AGENT_LABEL_ENV = "PI_BACKGROUND_AGENT_LABEL"
+const MAX_AGENT_DEPTH = 2
 const MAX_RESULT_CHARS = 50_000
-const DELEGATED_TASK_INSTRUCTION =
-  "Another agent delegated this task to you. Complete it in this session. When a skill assigns work to a background agent, you are that agent; continue with the remaining steps directly."
-
-function delegatedTaskPrompt(task: string): string {
-  return `${DELEGATED_TASK_INSTRUCTION}\n\n${task}`
-}
 
 type AgentSession = {
   id: string
@@ -158,10 +154,10 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   const tasks = options.tasks ?? new BackgroundTasks(options.tmux ?? systemTmux)
   const tmux = options.tmux ?? directTmux
   const childStatusFile = process.env[STATUS_FILE_ENV]
-  if (childStatusFile) {
-    await registerChildBridge(pi, childStatusFile, tmux)
-    return
-  }
+  const parsedDepth = Number.parseInt(process.env[DEPTH_ENV] ?? "", 10)
+  const depth = childStatusFile ? (Number.isFinite(parsedDepth) ? parsedDepth : 1) : 0
+  if (childStatusFile) await registerChildBridge(pi, childStatusFile, tmux)
+  if (depth >= MAX_AGENT_DEPTH) return
 
   const watchers = new Map<string, FSWatcher>()
   let agentsCache = await listAgents(tasks, tmux, currentTmuxPane())
@@ -170,6 +166,8 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   const monitor = (agent: AgentSession) => {
     if (watchers.has(agent.id)) return
 
+    const activity: BackgroundActivity = { id: `background-agent:${agent.id}`, source: "background_agent", label: agent.label }
+    pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
     let completed = false
     let consuming = false
     const consume = async () => {
@@ -185,6 +183,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       completed = true
       watchers.get(agent.id)?.close()
       watchers.delete(agent.id)
+      pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
       const failed = completion.kind === "exit" || completion.stopReason === "error"
       const status = failed
         ? completion.kind === "exit"
@@ -258,13 +257,13 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       const piArgs = [...invocation.args, "--name", `agent: ${label}`]
 
       if (ctx.model) piArgs.push("--model", model)
-      piArgs.push("--thinking", thinking, delegatedTaskPrompt(params.task))
+      piArgs.push("--thinking", thinking, params.task)
 
       const task = await tasks.create({
         kind: "agent", label, cwd: params.cwd ?? ctx.cwd, parent, owner,
         command: invocation.command, args: piArgs, interactiveAfterExit: true,
         statusFileEnv: STATUS_FILE_ENV,
-        env: { [AGENT_LABEL_ENV]: label, PI_BACKGROUND_AGENT_PARENT: parent },
+        env: { [AGENT_LABEL_ENV]: label, [DEPTH_ENV]: String(depth + 1), PI_BACKGROUND_AGENT_PARENT: parent },
         metadata: { "@pi_agent_status": "running", "@pi_agent_model": model, "@pi_agent_thinking": thinking },
       })
       const { id, target, statusFile } = task

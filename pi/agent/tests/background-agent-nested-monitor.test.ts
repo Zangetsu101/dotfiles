@@ -17,7 +17,9 @@ test("a child agent waits for nested background monitors before reporting comple
   const directory = await mkdtemp(join(tmpdir(), "pi-background-agent-test-"))
   const statusFile = join(directory, "completion.json")
   const previousStatusFile = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
+  const previousTmuxPane = process.env.TMUX_PANE
   process.env.PI_BACKGROUND_AGENT_STATUS_FILE = statusFile
+  process.env.TMUX_PANE = "%isolated-nested-monitor-test"
 
   const handlers = new Map<string, Handler[]>()
   const tools = new Map<string, any>()
@@ -121,5 +123,7 @@ test("a child agent waits for nested background monitors before reporting comple
     await Promise.all(taskTargets.map((target) => execFileAsync("tmux", ["kill-session", "-t", target]).catch(() => undefined)))
     if (previousStatusFile === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
     else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousStatusFile
+    if (previousTmuxPane === undefined) delete process.env.TMUX_PANE
+    else process.env.TMUX_PANE = previousTmuxPane
   }
 })
