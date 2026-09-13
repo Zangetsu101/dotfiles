@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 import { BACKGROUND_ACTIVITY_FINISHED, BACKGROUND_ACTIVITY_STARTED, type BackgroundActivity } from "./lib/background-activity.ts"
-import { BACKGROUND_TASK_CREATED, BackgroundTasks, safeTaskLabel, type BackgroundTask } from "./lib/background-task.ts"
+import { BACKGROUND_TASK_CREATED, BACKGROUND_TASK_STATUS_CHANGED, BackgroundTasks, safeTaskLabel, type BackgroundTask } from "./lib/background-task.ts"
 
 const MAX_OUTPUT_CHARS = 50_000
 const POLL_MS = 100
@@ -91,6 +91,12 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
   pi.events.on(BACKGROUND_TASK_CREATED, (task) => {
     const created = task as BackgroundTask
     if (created.owner === owner && !taskCache.some((item) => item.id === created.id)) taskCache.push(created)
+  })
+
+  pi.events.on(BACKGROUND_TASK_STATUS_CHANGED, (task) => {
+    const changed = task as BackgroundTask
+    const cached = taskCache.find((item) => item.id === changed.id)
+    if (cached) cached.status = changed.status
   })
 
   pi.on("session_start", async (_event, ctx) => {

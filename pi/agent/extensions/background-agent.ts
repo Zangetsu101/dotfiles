@@ -11,6 +11,7 @@ import {
 } from "./lib/background-activity.ts"
 import {
   BACKGROUND_TASK_CREATED,
+  BACKGROUND_TASK_STATUS_CHANGED,
   BackgroundTasks,
   systemTmux,
   writeTaskCompletion,
@@ -184,16 +185,23 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       completed = true
       watchers.get(agent.id)?.close()
       watchers.delete(agent.id)
-      const failed = completion.kind === "exit"
-      const status = failed ? `failed with exit code ${completion.exitCode ?? "unknown"}` : "finished its initial task"
+      const failed = completion.kind === "exit" || completion.stopReason === "error"
+      const status = failed
+        ? completion.kind === "exit"
+          ? `failed with exit code ${completion.exitCode ?? "unknown"}`
+          : "failed with a model error"
+        : "finished its initial task"
       await Promise.all([
         tmux.run(["set-option", "-w", "-t", agent.target, "@pi_agent_status", failed ? "failed" : "settled"]),
         tmux.run(["set-option", "-w", "-t", agent.target, "@pi_task_status", failed ? "failed" : "completed"]),
       ]).catch(() => undefined)
 
       const summary = `Background agent ${agent.id} (${agent.label}) ${status}.`
+      const taskStatus = failed ? "failed" : "completed"
+      agent.status = taskStatus
       const cached = agentsCache.find((item) => item.id === agent.id)
-      if (cached) cached.status = failed ? "failed" : "settled"
+      if (cached) cached.status = taskStatus
+      pi.events.emit(BACKGROUND_TASK_STATUS_CHANGED, agent)
       const attach = process.env.TMUX
         ? `/task attach ${agent.id}`
         : `tmux attach -t ${agent.target}`

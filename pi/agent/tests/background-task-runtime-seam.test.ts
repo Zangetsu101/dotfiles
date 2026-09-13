@@ -60,6 +60,8 @@ test("agent completion updates the task-list window status", async () => {
   const tasks = new BackgroundTasks(tmux)
   const runtime = new FakePiRuntime()
   try {
+    backgroundMonitorExtension(runtime.pi, { tasks, owner: "%owner" })
+    await runtime.emit("session_start", { reason: "startup" })
     await backgroundAgentExtension(runtime.pi, { tasks, tmux })
     const result = await runtime.execute("background_agent", { task: "review", label: "review" })
 
@@ -68,6 +70,35 @@ test("agent completion updates the task-list window status", async () => {
 
     assert.equal(runtime.messages.length, 1)
     assert.equal((await tasks.list("%owner"))[0]?.status, "completed")
+    const completions = runtime.commands.get("task").getArgumentCompletions("attach review")
+    assert.match(completions[0]?.description ?? "", /completed/)
+  } finally {
+    await runtime.emit("session_shutdown", { reason: "reload" })
+    if (previousPane === undefined) delete process.env.TMUX_PANE; else process.env.TMUX_PANE = previousPane
+    if (previousAgentStatus === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE; else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousAgentStatus
+  }
+})
+
+test("agent model errors mark the task and autocomplete entry as failed", async () => {
+  const previousPane = process.env.TMUX_PANE
+  const previousAgentStatus = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
+  process.env.TMUX_PANE = "%owner"
+  delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
+  const tmux = new FakeTmuxProcessAdapter()
+  const tasks = new BackgroundTasks(tmux)
+  const runtime = new FakePiRuntime()
+  try {
+    backgroundMonitorExtension(runtime.pi, { tasks, owner: "%owner" })
+    await runtime.emit("session_start", { reason: "startup" })
+    await backgroundAgentExtension(runtime.pi, { tasks, tmux })
+    const result = await runtime.execute("background_agent", { task: "review", label: "review" })
+
+    await writeFile(result.details.statusFile, JSON.stringify({ kind: "settled", output: "", stopReason: "error" }))
+    for (let attempt = 0; attempt < 50 && runtime.messages.length < 1; attempt++) await new Promise((resolve) => setTimeout(resolve, 5))
+
+    assert.equal((await tasks.list("%owner"))[0]?.status, "failed")
+    const completions = runtime.commands.get("task").getArgumentCompletions("attach review")
+    assert.match(completions[0]?.description ?? "", /failed/)
   } finally {
     await runtime.emit("session_shutdown", { reason: "reload" })
     if (previousPane === undefined) delete process.env.TMUX_PANE; else process.env.TMUX_PANE = previousPane

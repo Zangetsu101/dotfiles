@@ -6,6 +6,7 @@ import { promisify } from "node:util"
 
 const execFileAsync = promisify(execFile)
 export const BACKGROUND_TASK_CREATED = "pi:background-task-created"
+export const BACKGROUND_TASK_STATUS_CHANGED = "pi:background-task-status-changed"
 export type TaskKind = "monitor" | "agent"
 export type TaskStatus = "running" | "completed" | "failed" | "cancelled"
 export type BackgroundTask = { id: string; kind: TaskKind; label: string; status: TaskStatus; target: string; owner: string; parent: string; cwd: string; statusFile: string; outputFile?: string; storageMode?: "hub" | "legacy" }
