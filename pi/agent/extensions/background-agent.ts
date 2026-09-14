@@ -301,8 +301,8 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     promptSnippet: "Delegate work to an inspectable Pi agent running in tmux",
     promptGuidelines: [
       "Delegated Pi work: use background_agent so the user can inspect it.",
-      "After background_agent starts: continue independent work, or return control to the user while waiting for its automatic completion notification.",
-      "background_agent live progress or suspected stalls: attach to the background agent and inspect its session."
+      "After background_agent starts, continue independent work. When only delegated work remains, yield the turn; the automatic completion or overrun notification will resume you.",
+      "Inspect a background agent's session after an overrun notification or other concrete evidence of a stall."
     ],
     parameters: Type.Object({
       task: Type.String({ description: "Task for the background Pi agent" }),
