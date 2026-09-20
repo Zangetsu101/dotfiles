@@ -8,6 +8,7 @@ import { FAMILY_ENTRY, familyForContext, type TaskFamily } from "./lib/backgroun
 const MAX_OUTPUT_CHARS = 50_000
 const POLL_MS = 100
 const TASK_ENTRY = "background-task-record"
+const TASK_REMOVED_ENTRY = "background-task-removed"
 
 function persistedTask(data: unknown): BackgroundTask | undefined {
   if (!data || typeof data !== "object") return undefined
@@ -85,9 +86,14 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     family = familyForContext(reason, ctx, pi.getSessionName?.())
     const restored = new Map<string, BackgroundTask>()
     for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.type !== "custom" || entry.customType !== TASK_ENTRY) continue
-      const task = persistedTask(entry.data)
-      if (task?.familyId === family.familyId) restored.set(task.id, task)
+      if (entry.type !== "custom") continue
+      if (entry.customType === TASK_ENTRY) {
+        const task = persistedTask(entry.data)
+        if (task?.familyId === family.familyId) restored.set(task.id, task)
+      } else if (entry.customType === TASK_REMOVED_ENTRY && entry.data && typeof entry.data === "object") {
+        const removed = entry.data as { id?: unknown; familyId?: unknown }
+        if (removed.familyId === family.familyId && typeof removed.id === "string") restored.delete(removed.id)
+      }
     }
     for (const task of restored.values()) tasks.remember?.(task)
 
@@ -206,6 +212,19 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
   })
 
 
+  const cleanTasks = async (selected: BackgroundTask[]): Promise<number> => {
+    const all = await tasks.list({ subtreeRootId: scope() })
+    const candidates = selected.flatMap((task) => tasks.subtree(task, all))
+    const removed = await tasks.cleanup(selected)
+    if (!removed) return 0
+    const remaining = new Set((await tasks.list({ subtreeRootId: scope() })).map((task) => task.id))
+    for (const task of candidates) {
+      if (!remaining.has(task.id)) pi.appendEntry?.(TASK_REMOVED_ENTRY, { id: task.id, familyId: task.familyId })
+    }
+    taskCache = taskCache.filter((task) => remaining.has(task.id))
+    return removed
+  }
+
   pi.registerCommand("task", { description: "List, attach, navigate, terminate, or clean background tasks", getArgumentCompletions: (prefix: string) => taskArgumentCompletions(taskCache, prefix), handler: async (args, ctx) => {
     const [action, ...rest] = args.trim().split(/\s+/); const reference = rest.join(" ")
     if (action === "list") {
@@ -221,12 +240,12 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       else if (result !== "switched") ctx.ui.notify(`Run: ${result}`, "info")
       return
     }
-    if (action === "clean" && !reference) { ctx.ui.notify(`Cleaned ${await tasks.cleanup(await tasks.list({ subtreeRootId: scope() }))} background task(s).`, "info"); return }
+    if (action === "clean" && !reference) { ctx.ui.notify(`Cleaned ${await cleanTasks(await tasks.list({ subtreeRootId: scope() }))} background task(s).`, "info"); return }
     const resolved = await tasks.resolveReference(reference, { subtreeRootId: scope() })
     if (resolved.kind === "unknown") { ctx.ui.notify(`Unknown background task: ${reference || "(missing reference)"}`, "error"); return }
     if (resolved.kind === "ambiguous") { ctx.ui.notify(`Ambiguous background task label: ${reference}. Use its ID or tmux target.`, "error"); return }
     const task = resolved.task
-    if (action === "clean") { ctx.ui.notify(`Cleaned ${await tasks.cleanup([task])} background task(s).`, "info"); return }
+    if (action === "clean") { ctx.ui.notify(`Cleaned ${await cleanTasks([task])} background task(s).`, "info"); return }
     if (action === "attach") { const result = await tasks.attach(task); if (result !== "switched") ctx.ui.notify(`Run: ${result}`, "info"); return }
     if (action === "terminate") {
       const terminable = task.status === "running" || (task.kind === "agent" && task.status !== "terminated" && task.status !== "interrupted")

@@ -102,6 +102,25 @@ test("a resumed extension reclaims the family and reconnects agent and monitor c
   await resumed.emit("session_shutdown", { reason: "reload" })
 }))
 
+test("cleaned tasks stay removed after the conversation resumes", async () => withTmuxEnvironment(async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+  const first = new FakePiRuntime({ sessionId: "cleaned" })
+  backgroundMonitorExtension(first.pi, { tasks, pollMs: 5 }); await backgroundAgentExtension(first.pi, { tasks, tmux, pollMs: 5 }); await first.emit("session_start", { reason: "startup" })
+  const agent = await first.execute("background_agent", { task: "review", label: "review", expectedCompletionMinutes: 1 })
+  await first.commands.get("task").handler(`terminate ${agent.details.id}`, first.context)
+  await first.commands.get("task").handler(`clean ${agent.details.id}`, first.context)
+  const persisted = [...first.entries]
+  await first.emit("session_shutdown", { reason: "reload" })
+
+  const resumed = new FakePiRuntime({ sessionId: "cleaned", entries: persisted })
+  backgroundMonitorExtension(resumed.pi, { tasks: new BackgroundTasks(tmux), pollMs: 5 })
+  await resumed.emit("session_start", { reason: "resume" })
+  await resumed.commands.get("task").handler("list", resumed.context)
+
+  assert.equal(resumed.notifications.at(-1), "No background tasks found.")
+  await resumed.emit("session_shutdown", { reason: "reload" })
+}))
+
 test("resume marks persisted running tasks interrupted when the family session disappeared", async () => withTmuxEnvironment(async () => {
   const tmux = new FakeTmuxProcessAdapter()
   const first = new FakePiRuntime({ sessionId: "interrupted" })
