@@ -35,7 +35,9 @@ test("real background extensions create, discover, complete, retain, attach, and
     ])
     for (let attempt = 0; attempt < 50 && runtime.messages.length < 2; attempt++) await new Promise((resolve) => setTimeout(resolve, 5))
     assert.equal(runtime.messages.length, 2)
-    assert.match(runtime.messages.find((message) => message.customType === "background-monitor")?.content ?? "", /monitor stdout\nmonitor stderr/)
+    const monitorMessage = runtime.messages.find((message) => message.customType === "background-monitor")?.content ?? ""
+    assert.match(monitorMessage, /monitor stdout\nmonitor stderr/)
+    assert.match(monitorMessage, /complete standalone result/)
     assert.match(runtime.messages.find((message) => message.customType === "background-agent")?.content ?? "", /agent final output/)
     assert.equal(tmux.tasks().find((task) => task.target === monitorResult.details.target)?.dead, true)
     assert.equal(tmux.tasks().find((task) => task.target === agentResult.details.target)?.dead, false)
@@ -92,6 +94,70 @@ test("agent completion cancels its deadline check-in", async () => {
 
     assert.equal(runtime.messages.length, 1)
     assert.equal(runtime.messages[0]?.customType, "background-agent")
+  } finally {
+    await runtime.emit("session_shutdown", { reason: "reload" })
+    if (previousPane === undefined) delete process.env.TMUX_PANE; else process.env.TMUX_PANE = previousPane
+    if (previousAgentStatus === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE; else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousAgentStatus
+  }
+})
+
+test("a vanished monitor window is reconciled as cancellation", async () => {
+  const tmux = new FakeTmuxProcessAdapter()
+  const tasks = new BackgroundTasks(tmux)
+  const runtime = new FakePiRuntime()
+  try {
+    backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5, owner: "%owner" })
+    const result = await runtime.execute("background_monitor", { command: "build", label: "build" })
+    await tmux.run(["kill-window", "-t", result.details.target])
+    for (let attempt = 0; attempt < 50 && runtime.messages.length < 1; attempt++) await new Promise((resolve) => setTimeout(resolve, 5))
+
+    assert.equal(runtime.messages.length, 1)
+    assert.match(runtime.messages[0]?.content ?? "", /was cancelled: task window disappeared before reporting completion/)
+  } finally {
+    await runtime.emit("session_shutdown", { reason: "reload" })
+  }
+})
+
+test("explicit agent termination reports cancellation to its parent", async () => {
+  const previousPane = process.env.TMUX_PANE
+  const previousAgentStatus = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
+  process.env.TMUX_PANE = "%owner"
+  delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
+  const tmux = new FakeTmuxProcessAdapter()
+  const tasks = new BackgroundTasks(tmux)
+  const runtime = new FakePiRuntime()
+  try {
+    await backgroundAgentExtension(runtime.pi, { tasks, tmux, pollMs: 5 })
+    const result = await runtime.execute("background_agent", { task: "review", label: "review", expectedCompletionMinutes: 1 })
+    await tasks.terminate((await tasks.resolve(result.details.id, "%owner"))!)
+    for (let attempt = 0; attempt < 50 && runtime.messages.length < 1; attempt++) await new Promise((resolve) => setTimeout(resolve, 5))
+
+    assert.equal(runtime.messages.length, 1)
+    assert.equal(runtime.messages[0]?.customType, "background-agent")
+    assert.match(runtime.messages[0]?.content ?? "", /cancelled: terminated by user/)
+  } finally {
+    await runtime.emit("session_shutdown", { reason: "reload" })
+    if (previousPane === undefined) delete process.env.TMUX_PANE; else process.env.TMUX_PANE = previousPane
+    if (previousAgentStatus === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE; else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousAgentStatus
+  }
+})
+
+test("a vanished agent window is reconciled as cancellation", async () => {
+  const previousPane = process.env.TMUX_PANE
+  const previousAgentStatus = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
+  process.env.TMUX_PANE = "%owner"
+  delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
+  const tmux = new FakeTmuxProcessAdapter()
+  const tasks = new BackgroundTasks(tmux)
+  const runtime = new FakePiRuntime()
+  try {
+    await backgroundAgentExtension(runtime.pi, { tasks, tmux, pollMs: 5 })
+    const result = await runtime.execute("background_agent", { task: "review", label: "review", expectedCompletionMinutes: 1 })
+    await tmux.run(["kill-window", "-t", result.details.target])
+    for (let attempt = 0; attempt < 50 && runtime.messages.length < 1; attempt++) await new Promise((resolve) => setTimeout(resolve, 5))
+
+    assert.equal(runtime.messages.length, 1)
+    assert.match(runtime.messages[0]?.content ?? "", /cancelled: task window disappeared before reporting completion/)
   } finally {
     await runtime.emit("session_shutdown", { reason: "reload" })
     if (previousPane === undefined) delete process.env.TMUX_PANE; else process.env.TMUX_PANE = previousPane
