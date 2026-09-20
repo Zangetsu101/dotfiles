@@ -35,6 +35,7 @@ class SharedTasks {
     this.claimed.add(task.id)
     return completion
   }
+  async claimCompletionOrReconcile(task: BackgroundTask) { return this.claimCompletion(task) }
   async setStatus(task: BackgroundTask, status: BackgroundTask["status"]) { task.status = status }
   async terminate(task: BackgroundTask, reason = "terminated by user") {
     if (task.status !== "running") return

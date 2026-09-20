@@ -460,6 +460,27 @@ export class BackgroundTasks {
     }
   }
 
+  async isPresent(task: Pick<BackgroundTask, "id">): Promise<boolean> {
+    try {
+      const [windows, panes] = await Promise.all([
+        this.tmux.run(["list-windows", "-a", "-F", "#{@pi_task_id}"]),
+        this.tmux.run(["list-panes", "-a", "-F", "#{@pi_task_id}"]),
+      ])
+      return [...windows.split("\n"), ...panes.split("\n")].includes(task.id)
+    } catch (error) {
+      if (/no server running|no sessions/i.test(error instanceof Error ? error.message : String(error))) return false
+      throw error
+    }
+  }
+
+  async claimCompletionOrReconcile(task: Pick<BackgroundTask, "id" | "statusFile">): Promise<TaskCompletionRecord | undefined> {
+    let completion = await this.claimCompletionRecord(task)
+    if (completion || await this.isPresent(task)) return completion
+    await writeTaskCompletion(task.statusFile, { status: "cancelled", reason: "task target disappeared before reporting completion" })
+    completion = await this.claimCompletionRecord(task)
+    return completion
+  }
+
   async claimCompletion(task: BackgroundTask): Promise<TaskCompletion | undefined> {
     return this.claimCompletionRecord(task) as Promise<TaskCompletion | undefined>
   }

@@ -16,7 +16,6 @@ import {
   BackgroundTasks,
   systemTmux,
   writeTaskCompletion,
-  type AgentTaskCompletion,
   type TaskStatus,
   type TmuxProcessAdapter,
 } from "./lib/background-task.ts"
@@ -29,6 +28,7 @@ const MAX_DEPTH_ENV = "PI_BACKGROUND_AGENT_MAX_DEPTH"
 const AGENT_LABEL_ENV = "PI_BACKGROUND_AGENT_LABEL"
 const DEFAULT_MAX_AGENT_DEPTH = 2
 const MAX_RESULT_CHARS = 50_000
+const POLL_MS = 100
 
 type AgentSession = {
   id: string
@@ -92,6 +92,7 @@ type BackgroundAgentOptions = {
   tasks?: BackgroundTasks
   tmux?: TmuxProcessAdapter
   millisecondsPerMinute?: number
+  pollMs?: number
 }
 
 function piInvocation(): { command: string; args: string[] } {
@@ -210,6 +211,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   const tasks = options.tasks ?? new BackgroundTasks(options.tmux ?? systemTmux)
   const tmux = options.tmux ?? directTmux
   const millisecondsPerMinute = options.millisecondsPerMinute ?? 60_000
+  const pollMs = options.pollMs ?? POLL_MS
   const childStatusFile = process.env[STATUS_FILE_ENV]
   const parsedDepth = Number.parseInt(process.env[DEPTH_ENV] ?? "", 10)
   const depth = childStatusFile ? (Number.isFinite(parsedDepth) ? parsedDepth : 1) : 0
@@ -219,6 +221,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   if (depth >= maxDepth) return
 
   const watchers = new Map<string, FSWatcher>()
+  const reconciliationTimers = new Map<string, NodeJS.Timeout>()
   let agentsCache: AgentSession[] = []
   let family: TaskFamily | undefined
   let shuttingDown = false
@@ -260,9 +263,9 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       if (consuming || shuttingDown) return
       consuming = true
 
-      const completion = await tasks.claimCompletionRecord(agent) as AgentTaskCompletion | undefined
-      if (!completion || !("kind" in completion)) {
-        if (settled) {
+      const completion = await tasks.claimCompletionOrReconcile(agent)
+      if (!completion) {
+        if (settled && !(await tasks.completion(agent))) {
           settled = false
           agent.status = "running"
           await tasks.setStatus(agent, "running")
@@ -274,19 +277,21 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
 
       settled = true
       pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
-      const failed = completion.kind === "exit" || completion.stopReason === "error"
-      const status = failed
-        ? completion.kind === "exit"
-          ? `failed with exit code ${completion.exitCode ?? "unknown"}`
-          : "failed with a model error"
-        : "finished its initial task"
+      const agentCompletion = "kind" in completion
+      const failed = agentCompletion ? completion.kind === "exit" || completion.stopReason === "error" : completion.status === "failed"
+      const terminated = !agentCompletion && completion.status === "cancelled"
+      const status = terminated
+        ? `was terminated${completion.reason ? `: ${completion.reason}` : ""}`
+        : failed
+          ? agentCompletion && completion.kind !== "exit" ? "failed with a model error" : `failed with exit code ${completion.exitCode ?? "unknown"}`
+          : "finished its initial task"
+      const taskStatus: TaskStatus = terminated ? "terminated" : failed ? "failed" : "succeeded"
       await Promise.all([
-        tmux.run(["set-option", "-w", "-t", agent.target, "@pi_agent_status", failed ? "failed" : "settled"]),
-        tmux.run(["set-option", "-w", "-t", agent.target, "@pi_task_status", failed ? "failed" : "succeeded"]),
+        tmux.run(["set-option", "-w", "-t", agent.target, "@pi_agent_status", terminated ? "terminated" : failed ? "failed" : "settled"]),
+        tmux.run(["set-option", "-w", "-t", agent.target, "@pi_task_status", taskStatus]),
       ]).catch(() => undefined)
 
       const summary = `Background agent ${agent.id} (${agent.label}) ${status}.`
-      const taskStatus = failed ? "failed" : "succeeded"
       agent.status = taskStatus
       const cached = agentsCache.find((item) => item.id === agent.id)
       if (cached) cached.status = taskStatus
@@ -294,7 +299,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       const attach = process.env.TMUX
         ? `/task attach ${agent.id}`
         : `tmux attach -t ${agent.target}`
-      const output = completion.output?.trim() || "(no final output)"
+      const output = "output" in completion ? completion.output?.trim() || "(no final output)" : "(no final output)"
 
       pi.sendMessage(
         {
@@ -318,6 +323,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       if (changed === basename(overrunFile(agent.statusFile))) void consumeOverrun()
     })
     watchers.set(agent.id, watcher)
+    reconciliationTimers.set(agent.id, setInterval(() => void consume(), pollMs))
     void consume()
     void consumeOverrun()
   }
@@ -342,7 +348,8 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     promptGuidelines: [
       "Delegated Pi work: use background_agent so the user can inspect it.",
       "After background_agent starts, continue independent work. When only delegated work remains, yield the turn; the automatic completion or overrun notification will resume you.",
-      "Inspect a background agent's session after an overrun notification or other concrete evidence of a stall."
+      "While delegated work is active, report progress rather than the result. After all delegated work returns, provide the complete standalone result in the final turn.",
+      "Monitor a background agent's session after an overrun notification or other concrete evidence of a stall; follow up until it completes or needs intervention."
     ],
     parameters: Type.Object({
       task: Type.String({ description: "Task for the background Pi agent" }),
@@ -398,5 +405,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     shuttingDown = true
     for (const watcher of watchers.values()) watcher.close()
     watchers.clear()
+    for (const timer of reconciliationTimers.values()) clearInterval(timer)
+    reconciliationTimers.clear()
   })
 }

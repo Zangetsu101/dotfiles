@@ -51,6 +51,21 @@ test("agent windows and pooled monitor panes complete, remain discoverable, and 
   await runtime.emit("session_shutdown", { reason: "reload" })
 }))
 
+test("vanished monitor and agent targets report termination", async () => withTmuxEnvironment(async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux); const runtime = new FakePiRuntime({ sessionId: "vanished" })
+  backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5 }); await backgroundAgentExtension(runtime.pi, { tasks, tmux, pollMs: 5 }); await runtime.emit("session_start", { reason: "startup" })
+  const monitor = await runtime.execute("background_monitor", { command: "build", label: "build" })
+  const agent = await runtime.execute("background_agent", { task: "review", label: "review", expectedCompletionMinutes: 1 })
+
+  await tmux.run(["kill-pane", "-t", monitor.details.target])
+  await tmux.run(["kill-window", "-t", agent.details.target])
+  await waitFor(() => runtime.messages.length === 2)
+
+  assert.match(runtime.messages.find((message) => message.customType === "background-monitor")?.content ?? "", /was cancelled: task target disappeared/)
+  assert.match(runtime.messages.find((message) => message.customType === "background-agent")?.content ?? "", /was terminated: task target disappeared/)
+  await runtime.emit("session_shutdown", { reason: "reload" })
+}))
+
 test("terminate and clean cascade through descendants, preserve siblings, and remove an empty family session", async () => {
   const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
   const parent = await tasks.create({ ...family, kind: "agent", label: "parent", parentId: "root-one" })

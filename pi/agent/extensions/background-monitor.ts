@@ -112,8 +112,8 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
     const consume = async () => {
       if (shuttingDown) return
-      const completion = await tasks.claimCompletion(task)
-      if (!completion) return
+      const completion = await tasks.claimCompletionOrReconcile(task)
+      if (!completion || !("status" in completion)) return
       clearInterval(timers.get(task.id))
       timers.delete(task.id)
       activities.delete(task.id)
@@ -131,7 +131,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       const summary = `Background monitor ${task.id} (${task.label}) ${status}.`
       const attach = process.env.TMUX ? `/task attach ${task.id}` : `tmux attach -t ${task.target}`
       if (ctx.hasUI) ctx.ui.notify(summary, failed ? "error" : "info")
-      pi.sendMessage({ customType: "background-monitor", content: `${summary}\nAttach with: ${attach}\n\nOutput:\n${output.trim() || "(no output)"}\n\nReview the result and report it to the user.`, display: true }, { deliverAs: "followUp", triggerTurn: true })
+      pi.sendMessage({ customType: "background-monitor", content: `${summary}\nAttach with: ${attach}\n\nOutput:\n${output.trim() || "(no output)"}\n\nReview the result. When all background work has returned, provide the complete standalone result in your final turn, including any conclusions that remain unchanged.`, display: true }, { deliverAs: "followUp", triggerTurn: true })
     }
     const launchConsume = () => {
       const pending = consume()
@@ -188,7 +188,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     label: "Background monitor",
     description: "Run a slow, finite shell command asynchronously in an inspectable tmux task. On exit, wake the agent with status and bounded output.",
     promptSnippet: "Run slow, finite shell commands asynchronously in inspectable tmux tasks",
-    promptGuidelines: ["Slow, finite commands requiring follow-up: use background_monitor.", "Short commands requiring immediate results: use bash."],
+    promptGuidelines: ["Monitor slow, finite commands requiring follow-up with background_monitor.", "Run short commands requiring immediate results with bash."],
     parameters: Type.Object({ command: Type.String({ description: "Slow, finite shell command to run asynchronously until it exits" }), label: Type.Optional(Type.String({ description: "Short description shown on completion" })) }),
     async execute(_id, params, _signal, _update, ctx) {
       if (!(await tasks.available())) throw new Error("background_monitor requires tmux on PATH")
