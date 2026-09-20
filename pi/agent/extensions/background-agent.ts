@@ -302,7 +302,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     promptGuidelines: [
       "Delegated Pi work: use background_agent so the user can inspect it.",
       "After background_agent starts, continue independent work. When only delegated work remains, yield the turn; the automatic completion or overrun notification will resume you.",
-      "Inspect a background agent's session after an overrun notification or other concrete evidence of a stall."
+      "Monitor a background agent's session after an overrun notification or other concrete evidence of a stall; follow up until it completes or needs intervention."
     ],
     parameters: Type.Object({
       task: Type.String({ description: "Task for the background Pi agent" }),

@@ -110,7 +110,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     label: "Background monitor",
     description: "Run a slow, finite shell command asynchronously in an inspectable tmux task. On exit, wake the agent with status and bounded output.",
     promptSnippet: "Run slow, finite shell commands asynchronously in inspectable tmux tasks",
-    promptGuidelines: ["Slow, finite commands requiring follow-up: use background_monitor.", "Short commands requiring immediate results: use bash."],
+    promptGuidelines: ["Monitor slow, finite commands requiring follow-up with background_monitor.", "Run short commands requiring immediate results with bash."],
     parameters: Type.Object({ command: Type.String({ description: "Slow, finite shell command to run asynchronously until it exits" }), label: Type.Optional(Type.String({ description: "Short description shown on completion" })) }),
     async execute(_id, params, _signal, _update, ctx) {
       if (!(await tasks.available())) throw new Error("background_monitor requires tmux on PATH")
