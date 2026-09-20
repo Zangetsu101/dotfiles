@@ -14,7 +14,20 @@ class SharedTasks {
   terminations: Array<{ id: string; reason: string }> = []
   claimBarrier?: Promise<void>
   async available() { return true }
-  async list(query?: { subtreeRootId: string }) { return this.tasks.filter((task) => query === undefined || task.parentId === query.subtreeRootId) }
+  async list(query?: { subtreeRootId: string }) {
+    if (!query) return this.tasks
+    const descendants = new Set([query.subtreeRootId])
+    for (let changed = true; changed;) {
+      changed = false
+      for (const task of this.tasks) {
+        if (task.parentId && descendants.has(task.parentId) && !descendants.has(task.id)) {
+          descendants.add(task.id)
+          changed = true
+        }
+      }
+    }
+    return this.tasks.filter((task) => descendants.has(task.id))
+  }
   async claimCompletion(task: BackgroundTask) {
     await this.claimBarrier
     const completion = this.completions.get(task.id)
@@ -35,7 +48,7 @@ function runningTask(id = "one"): BackgroundTask {
   return { id, kind: "monitor", label: `task ${id}`, status: "running", target: `target-${id}`, parent: "%test", parentId: "%test", cwd: "/repo", statusFile: `/tmp/${id}` }
 }
 
-function runtime(shared: SharedTasks, confirmations: boolean[] = []) {
+function runtime(shared: SharedTasks, confirmations: boolean[] = [], subtreeRootId: string | null = "%test") {
   const handlers = new Map<string, Handler[]>()
   const messages: any[] = []
   const notifications: string[] = []
@@ -59,7 +72,7 @@ function runtime(shared: SharedTasks, confirmations: boolean[] = []) {
       async confirm(_title: string, message: string) { prompts.push(message); return confirmations.shift() ?? false },
     },
   }
-  backgroundMonitorExtension(pi, { tasks: shared as any, pollMs: 5, subtreeRootId: "%test" })
+  backgroundMonitorExtension(pi, { tasks: shared as any, pollMs: 5, ...(subtreeRootId === null ? {} : { subtreeRootId }) })
   return {
     messages, notifications, prompts, activity, commands,
     async emit(name: string, event: any = {}) {
@@ -173,6 +186,34 @@ test("shutdown waits for a racing completion instead of overwriting it with canc
   assert.equal(shared.tasks[0]?.status, "succeeded")
   assert.equal(current.messages.length, 1)
   assert.match(current.messages[0].content, /finished with exit code 0/)
+})
+
+test("Root Pi quit can terminate an active nested descendant", async () => {
+  const shared = new SharedTasks()
+  shared.tasks.push(
+    { ...runningTask("parent"), familyId: "family:monitor-runtime", parentId: "root:monitor-runtime", status: "succeeded" },
+    { ...runningTask("nested"), familyId: "family:monitor-runtime", parentId: "parent" },
+  )
+  const current = runtime(shared, [true], null)
+  await current.emit("session_start", { reason: "startup" })
+  await current.emit("session_shutdown", { reason: "quit" })
+
+  assert.match(current.prompts[0]!, /Terminate 1 running task/)
+  assert.deepEqual(shared.terminations, [{ id: "nested", reason: "Root Pi quit" }])
+})
+
+test("Root Pi quit terminates a running subtree only through its highest running node", async () => {
+  const shared = new SharedTasks()
+  shared.tasks.push(
+    { ...runningTask("parent"), familyId: "family:monitor-runtime", parentId: "root:monitor-runtime" },
+    { ...runningTask("settled"), familyId: "family:monitor-runtime", parentId: "parent", status: "succeeded" },
+    { ...runningTask("nested"), familyId: "family:monitor-runtime", parentId: "settled" },
+  )
+  const current = runtime(shared, [true], null)
+  await current.emit("session_start", { reason: "startup" })
+  await current.emit("session_shutdown", { reason: "quit" })
+
+  assert.deepEqual(shared.terminations, [{ id: "parent", reason: "Root Pi quit" }])
 })
 
 test("Root Pi quit defaults to keeping work and can terminate running monitors", async () => {

@@ -53,6 +53,12 @@ export const systemTmux: TmuxProcessAdapter = {
 export function safeTaskLabel(label: string): string {
   return label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "task"
 }
+function siblingOrdinal(task: BackgroundTask, label: string): number {
+  const localName = (task.displayName ?? task.label).replace(/ ← .*$/, "")
+  if (localName === label) return 1
+  const suffix = localName.startsWith(`${label} (`) ? Number.parseInt(localName.slice(label.length + 2, -1), 10) : 0
+  return Number.isFinite(suffix) ? suffix : 0
+}
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`
 }
@@ -113,6 +119,34 @@ export class BackgroundTasks {
     this.known.set(task.id, task)
   }
 
+  private async withFamilyLock<T>(familyId: string, operation: () => Promise<T>): Promise<T> {
+    const lock = `pi-task-family:${familyId}`
+    try {
+      await this.tmux.run(["wait-for", "-L", lock])
+    } catch {
+      return operation()
+    }
+    try {
+      return await operation()
+    } finally {
+      await this.tmux.run(["wait-for", "-U", lock]).catch(() => undefined)
+    }
+  }
+
+  private async nextSiblingOrdinal(session: string, parentId: string, label: string, siblings: BackgroundTask[]): Promise<{ key: string; ordinal: number; counters: Record<string, number> }> {
+    const stored = await this.tmux.run(["show-options", "-v", "-t", session, "@pi_task_sibling_ordinals"]).catch(() => "")
+    let counters: Record<string, number> = {}
+    try { counters = JSON.parse(stored) as Record<string, number> } catch {}
+    const key = JSON.stringify([parentId, label])
+    const highest = Math.max(counters[key] ?? 0, ...siblings.map((task) => siblingOrdinal(task, label)))
+    return { key, ordinal: highest + 1, counters }
+  }
+
+  private async commitSiblingOrdinal(session: string, allocation: { key: string; ordinal: number; counters: Record<string, number> }): Promise<void> {
+    allocation.counters[allocation.key] = allocation.ordinal
+    await this.tmux.run(["set-option", "-t", session, "@pi_task_sibling_ordinals", JSON.stringify(allocation.counters)])
+  }
+
   async familyExists(familyId: string): Promise<boolean> {
     return Boolean(await this.familySession(familyId))
   }
@@ -129,7 +163,7 @@ export class BackgroundTasks {
   async create(input: CreateInput): Promise<BackgroundTask> {
     const currentPane = process.env.TMUX_PANE ?? ""
     const familyId = input.familyId ?? process.env.PI_BACKGROUND_TASK_FAMILY_ID ?? `root-${process.pid}`
-    return serialized(familyId, async () => {
+    return serialized(familyId, () => this.withFamilyLock(familyId, async () => {
       const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
       const directory = await mkdtemp(join(tmpdir(), `pi-background-task-${id}-`))
       const parentId = input.parentId ?? input.parent ?? input.rootId ?? familyId
@@ -156,7 +190,8 @@ export class BackgroundTasks {
           await Promise.all(metadata.map(([key, value]) => this.tmux.run(["set-option", "-t", session, key, value])))
         }
         const siblings = [...this.known.values()].filter((task) => task.familyId === familyId && task.parentId === parentId && task.label === input.label)
-        const suffix = siblings.length ? ` (${siblings.length + 1})` : ""
+        const allocation = await this.nextSiblingOrdinal(session, parentId, input.label, siblings)
+        const suffix = allocation.ordinal === 1 ? "" : ` (${allocation.ordinal})`
         const nested = parentId !== rootId
         const displayName = `${input.label}${suffix}${nested && input.parentLabel ? ` ← ${input.parentLabel}` : ""}`
         const ready = `pi-task-ready-${id}`
@@ -195,6 +230,7 @@ export class BackgroundTasks {
         ])
         if (input.remainOnExit) await this.tmux.run(["set-option", "-p", "-t", target, "remain-on-exit", "on"])
         await this.tmux.run(["wait-for", "-S", ready])
+        await this.commitSiblingOrdinal(session, allocation)
         this.known.set(id, task)
         if (createdSession) await this.tmux.run(["kill-window", "-t", `${session}:bootstrap`]).catch(() => undefined)
         return task
@@ -204,7 +240,7 @@ export class BackgroundTasks {
         if (createdSession) await this.tmux.run(["kill-session", "-t", session]).catch(() => undefined)
         throw error
       }
-    })
+    }))
   }
 
   private async familySession(familyId: string): Promise<string> {
@@ -256,20 +292,27 @@ export class BackgroundTasks {
     ])
   }
   async renameNode(nodeId: string, label: string): Promise<void> {
-    const all = await this.list()
-    const node = all.find((task) => task.id === nodeId)
-    if (!node) return
-    const siblings = all.filter((task) => task.id !== node.id && task.parentId === node.parentId && task.label === label)
-    const suffix = siblings.length ? ` (${siblings.length + 1})` : ""
-    const parent = all.find((task) => task.id === node.parentId)
-    node.label = label
-    node.displayName = `${label}${suffix}${node.parentId !== node.rootId && parent ? ` ← ${parent.label}` : ""}`
-    await this.renameTarget(node)
-    for (const child of all.filter((task) => task.parentId === node.id)) {
-      const ownName = (child.displayName ?? child.label).split(" ← ", 1)[0]
-      child.displayName = `${ownName} ← ${label}`
-      await this.renameTarget(child)
-    }
+    const familyId = (await this.list()).find((task) => task.id === nodeId)?.familyId
+    if (!familyId) return
+    await serialized(familyId, () => this.withFamilyLock(familyId, async () => {
+      const all = await this.list({ familyId })
+      const node = all.find((task) => task.id === nodeId)
+      if (!node || node.label === label) return
+      const session = await this.familySession(familyId)
+      const siblings = all.filter((task) => task.id !== node.id && task.parentId === node.parentId && task.label === label)
+      const allocation = await this.nextSiblingOrdinal(session, node.parentId ?? "", label, siblings)
+      const suffix = allocation.ordinal === 1 ? "" : ` (${allocation.ordinal})`
+      const parent = all.find((task) => task.id === node.parentId)
+      node.label = label
+      node.displayName = `${label}${suffix}${node.parentId !== node.rootId && parent ? ` ← ${parent.label}` : ""}`
+      await this.renameTarget(node)
+      for (const child of all.filter((task) => task.parentId === node.id)) {
+        const ownName = (child.displayName ?? child.label).split(" ← ", 1)[0]
+        child.displayName = `${ownName} ← ${label}`
+        await this.renameTarget(child)
+      }
+      await this.commitSiblingOrdinal(session, allocation)
+    }))
   }
   private async renameTarget(task: BackgroundTask): Promise<void> {
     const scope = task.kind === "agent" ? "-w" : "-p"

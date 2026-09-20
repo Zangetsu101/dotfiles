@@ -81,7 +81,6 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
   })
   const scope = () => configuredSubtreeRootId ?? family?.nodeId ?? process.env.TMUX_PANE ?? ""
   const refreshTasks = async () => (taskCache = await tasks.list({ subtreeRootId: scope() }))
-  const ownedRunning = async () => (await tasks.list({ subtreeRootId: scope() })).filter((task) => task.status === "running" && (!family || configuredSubtreeRootId || task.parentId === family.nodeId))
   const restoreFamily = async (reason: string, ctx: ExtensionContext) => {
     family = familyForContext(reason, ctx, pi.getSessionName?.())
     const restored = new Map<string, BackgroundTask>()
@@ -245,11 +244,24 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       timers.clear()
       await Promise.allSettled([...consumers])
       if (event.reason === "quit" && family?.isRoot) {
-        const running = await ownedRunning()
+        const all = await tasks.list({ subtreeRootId: scope() })
+        const running = all.filter((task) => task.status === "running")
         const terminate = running.length && ctx.hasUI
           ? await ctx.ui.confirm("Running background tasks", `Terminate ${running.length} running task(s)? Choose Cancel to keep them running.`)
           : false
-        if (terminate) for (const task of running) await tasks.terminate(task, "Root Pi quit")
+        if (terminate) {
+          const byId = new Map(all.map((task) => [task.id, task]))
+          const runningIds = new Set(running.map((task) => task.id))
+          const roots = running.filter((candidate) => {
+            let ancestor = candidate.parentId ? byId.get(candidate.parentId) : undefined
+            while (ancestor) {
+              if (runningIds.has(ancestor.id)) return false
+              ancestor = ancestor.parentId ? byId.get(ancestor.parentId) : undefined
+            }
+            return true
+          })
+          for (const task of roots) await tasks.terminate(task, "Root Pi quit")
+        }
       }
       for (const activity of activities.values()) pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
       activities.clear()

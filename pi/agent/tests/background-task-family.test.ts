@@ -7,13 +7,18 @@ class RecordingTmux implements TmuxProcessAdapter {
   session = ""
   windows = new Map<string, string>()
   panes: Array<{ id: string; window: string }> = []
+  sessionMetadata = new Map<string, string>()
   nextWindow = 1
   nextPane = 1
 
   async run(args: string[]): Promise<string> {
     this.calls.push(args)
     if (args[0] === "-V") return "tmux fake"
-    if (args[0] === "list-sessions") return this.session ? `${this.session}\tfamily-one` : ""
+    if (args[0] === "list-sessions") {
+      if (!this.session) return ""
+      const format = args[args.indexOf("-F") + 1] ?? "#{session_name}"
+      return format.replace("#{session_id}", this.session).replace("#{session_name}", "dotfiles").replace(/#\{(@[^}]+)\}/g, (_match, key) => this.sessionMetadata.get(key) ?? "")
+    }
     if (args[0] === "new-session") {
       this.session = `$${this.nextWindow++}`
       return this.session
@@ -29,6 +34,12 @@ class RecordingTmux implements TmuxProcessAdapter {
       this.panes.push({ id, window })
       return id
     }
+    if (args[0] === "set-option" && !args.includes("-w") && !args.includes("-p")) {
+      const target = args.indexOf("-t")
+      this.sessionMetadata.set(args[target + 2]!, args[target + 3] ?? "")
+      return ""
+    }
+    if (args[0] === "show-options") return this.sessionMetadata.get(args.at(-1)!) ?? ""
     if (args[0] === "list-windows") return ""
     if (args[0] === "list-panes") return ""
     return ""
@@ -74,6 +85,22 @@ test("nested display names show only the immediate parent and duplicate names ge
   await tasks.create({ ...base, kind: "agent", label: "verify", parentId: "parent-task", parentLabel: "research" })
 
   assert.deepEqual([...tmux.windows.values()].filter((name) => name !== "bootstrap"), ["tests", "tests (2)", "verify ← research", "verify (2) ← research"])
+})
+
+test("duplicate suffixes remain monotonic after a sibling is cleaned", async () => {
+  const tmux = new RecordingTmux()
+  const tasks = new BackgroundTasks(tmux)
+
+  const first = await tasks.create({ ...base, kind: "agent", label: "tests" })
+  const second = await tasks.create({ ...base, kind: "agent", label: "tests" })
+  const third = await tasks.create({ ...base, kind: "agent", label: "tests" })
+  await Promise.all([first, second, third].map((task) => tasks.setStatus(task, "succeeded")))
+  await tasks.cleanup([second, third])
+
+  const resumedTasks = new BackgroundTasks(tmux)
+  const fourth = await resumedTasks.create({ ...base, kind: "agent", label: "tests" })
+
+  assert.equal(fourth.displayName, "tests (4)")
 })
 
 test("monitor pools hold at most eight panes before allocating the next FIFO pool", async () => {
