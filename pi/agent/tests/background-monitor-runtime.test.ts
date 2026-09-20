@@ -15,7 +15,8 @@ class SharedTasks {
   claimBarrier?: Promise<void>
   async available() { return true }
   async list(owner?: string) { return this.tasks.filter((task) => owner === undefined || task.owner === owner) }
-  async claimCompletion(task: BackgroundTask) {
+  async isPresent(task: Pick<BackgroundTask, "id">) { return this.tasks.some((candidate) => candidate.id === task.id) }
+  async claimCompletionOrReconcile(task: BackgroundTask) {
     await this.claimBarrier
     const completion = this.completions.get(task.id)
     if (!completion || this.claimed.has(task.id)) return undefined

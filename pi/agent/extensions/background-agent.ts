@@ -16,7 +16,6 @@ import {
   BackgroundTasks,
   systemTmux,
   writeTaskCompletion,
-  type AgentTaskCompletion,
   type TmuxProcessAdapter,
 } from "./lib/background-task.ts"
 
@@ -26,6 +25,7 @@ const DEPTH_ENV = "PI_BACKGROUND_AGENT_DEPTH"
 const AGENT_LABEL_ENV = "PI_BACKGROUND_AGENT_LABEL"
 const MAX_AGENT_DEPTH = 2
 const MAX_RESULT_CHARS = 50_000
+const POLL_MS = 100
 
 type AgentSession = {
   id: string
@@ -85,6 +85,7 @@ type BackgroundAgentOptions = {
   tasks?: BackgroundTasks
   tmux?: TmuxProcessAdapter
   millisecondsPerMinute?: number
+  pollMs?: number
 }
 
 function piInvocation(): { command: string; args: string[] } {
@@ -190,6 +191,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   const tasks = options.tasks ?? new BackgroundTasks(options.tmux ?? systemTmux)
   const tmux = options.tmux ?? directTmux
   const millisecondsPerMinute = options.millisecondsPerMinute ?? 60_000
+  const pollMs = options.pollMs ?? POLL_MS
   const childStatusFile = process.env[STATUS_FILE_ENV]
   const parsedDepth = Number.parseInt(process.env[DEPTH_ENV] ?? "", 10)
   const depth = childStatusFile ? (Number.isFinite(parsedDepth) ? parsedDepth : 1) : 0
@@ -197,6 +199,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   if (depth >= MAX_AGENT_DEPTH) return
 
   const watchers = new Map<string, FSWatcher>()
+  const reconciliationTimers = new Map<string, NodeJS.Timeout>()
   let agentsCache = await listAgents(tasks, tmux, currentTmuxPane())
   let shuttingDown = false
 
@@ -232,8 +235,8 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       if (completed || consuming || shuttingDown) return
       consuming = true
 
-      const completion = await tasks.claimCompletionRecord(agent) as AgentTaskCompletion | undefined
-      if (!completion || !("kind" in completion)) {
+      const completion = await tasks.claimCompletionOrReconcile(agent)
+      if (!completion) {
         consuming = false
         return
       }
@@ -241,20 +244,34 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       completed = true
       watchers.get(agent.id)?.close()
       watchers.delete(agent.id)
+      clearInterval(reconciliationTimers.get(agent.id))
+      reconciliationTimers.delete(agent.id)
       pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
-      const failed = completion.kind === "exit" || completion.stopReason === "error"
-      const status = failed
-        ? completion.kind === "exit"
-          ? `failed with exit code ${completion.exitCode ?? "unknown"}`
-          : "failed with a model error"
-        : "finished its initial task"
+      let failed: boolean
+      let cancelled = false
+      let status: string
+      let output: string
+      if ("kind" in completion) {
+        failed = completion.kind === "exit" || completion.stopReason === "error"
+        status = failed
+          ? completion.kind === "exit" ? `failed with exit code ${completion.exitCode ?? "unknown"}` : "failed with a model error"
+          : "finished its initial task"
+        output = completion.output?.trim() || "(no final output)"
+      } else {
+        failed = completion.status === "failed"
+        cancelled = completion.status === "cancelled"
+        status = cancelled
+          ? `was cancelled${completion.reason ? `: ${completion.reason}` : ""}`
+          : failed ? `failed with exit code ${completion.exitCode ?? "unknown"}` : "finished its initial task"
+        output = "(no final output)"
+      }
+      const taskStatus = cancelled ? "cancelled" : failed ? "failed" : "completed"
       await Promise.all([
-        tmux.run(["set-option", "-w", "-t", agent.target, "@pi_agent_status", failed ? "failed" : "settled"]),
-        tmux.run(["set-option", "-w", "-t", agent.target, "@pi_task_status", failed ? "failed" : "completed"]),
+        tmux.run(["set-option", "-w", "-t", agent.target, "@pi_agent_status", cancelled ? "cancelled" : failed ? "failed" : "settled"]),
+        tmux.run(["set-option", "-w", "-t", agent.target, "@pi_task_status", taskStatus]),
       ]).catch(() => undefined)
 
       const summary = `Background agent ${agent.id} (${agent.label}) ${status}.`
-      const taskStatus = failed ? "failed" : "completed"
       agent.status = taskStatus
       const cached = agentsCache.find((item) => item.id === agent.id)
       if (cached) cached.status = taskStatus
@@ -262,12 +279,10 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       const attach = process.env.TMUX
         ? `/task attach ${agent.id}`
         : `tmux attach -t ${agent.target}`
-      const output = completion.output?.trim() || "(no final output)"
-
       pi.sendMessage(
         {
           customType: "background-agent",
-          content: `${summary}\nAttach with: ${attach}\n\nFinal output:\n${output}\n\nReview the result and report it to the user.`,
+          content: `${summary}\nAttach with: ${attach}\n\nFinal output:\n${output}\n\nReview the result. When all background work has returned, provide the complete standalone result in your final turn, including any conclusions that remain unchanged.`,
           display: true,
         },
         { deliverAs: "followUp", triggerTurn: true },
@@ -285,7 +300,12 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       if (changed === basename(overrunFile(agent.statusFile))) void consumeOverrun()
     })
     watchers.set(agent.id, watcher)
-    void consume()
+    const reconcile = async () => {
+      if (completed || shuttingDown) return
+      await consume()
+    }
+    reconciliationTimers.set(agent.id, setInterval(() => void reconcile(), pollMs))
+    void reconcile()
     void consumeOverrun()
   }
 
@@ -302,6 +322,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     promptGuidelines: [
       "Delegated Pi work: use background_agent so the user can inspect it.",
       "After background_agent starts, continue independent work. When only delegated work remains, yield the turn; the automatic completion or overrun notification will resume you.",
+      "While delegated work is active, report progress rather than the result. After all delegated work returns, provide the complete standalone result in the final turn.",
       "Monitor a background agent's session after an overrun notification or other concrete evidence of a stall; follow up until it completes or needs intervention."
     ],
     parameters: Type.Object({
@@ -356,5 +377,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     shuttingDown = true
     for (const watcher of watchers.values()) watcher.close()
     watchers.clear()
+    for (const timer of reconciliationTimers.values()) clearInterval(timer)
+    reconciliationTimers.clear()
   })
 }

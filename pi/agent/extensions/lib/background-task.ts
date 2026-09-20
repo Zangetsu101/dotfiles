@@ -85,6 +85,10 @@ export class BackgroundTasks {
     const legacy = sessions.split("\n").filter(Boolean).filter((line) => { const fields = line.split("\t"); return fields[2] && !fields[10] }).map((line) => parse(line, "legacy"))
     return [...current, ...legacy].filter((task) => owner === undefined || task.owner === owner)
   }
+  async isPresent(task: Pick<BackgroundTask, "id">): Promise<boolean> {
+    try { const windows = await this.tmux.run(["list-windows", "-a", "-F", "#{@pi_task_id}"]); return windows.split("\n").includes(task.id) }
+    catch (error) { if (/no server running|no sessions/i.test(error instanceof Error ? error.message : String(error))) return false; throw error }
+  }
   async setStatus(task: BackgroundTask, status: TaskStatus): Promise<void> { task.status = status; await this.tmux.run(["set-option", "-w", "-t", task.target, "@pi_task_status", status]).catch(() => undefined) }
   async attach(task: Pick<BackgroundTask, "target"> & Partial<Pick<BackgroundTask, "storageMode">>): Promise<"switched" | string> { if (task.storageMode === "legacy") throw new Error("Legacy cleanup-only tasks cannot be attached"); if (!process.env.TMUX) return `tmux attach -t ${task.target}`; await this.tmux.run(["switch-client", "-t", task.target]); return "switched" }
   async terminate(task: BackgroundTask, reason = "terminated by user"): Promise<void> {
@@ -116,6 +120,13 @@ export class BackgroundTasks {
     return removed
   }
   async completion(task: Pick<BackgroundTask, "statusFile">): Promise<TaskCompletionRecord | undefined> { try { return JSON.parse(await readFile(task.statusFile, "utf8")) as TaskCompletionRecord } catch { return undefined } }
+  async claimCompletionOrReconcile(task: Pick<BackgroundTask, "id" | "statusFile">): Promise<TaskCompletionRecord | undefined> {
+    let completion = await this.claimCompletionRecord(task)
+    if (completion || await this.isPresent(task)) return completion
+    await writeTaskCompletion(task.statusFile, { status: "cancelled", reason: "task window disappeared before reporting completion" })
+    completion = await this.claimCompletionRecord(task)
+    return completion
+  }
   async claimCompletion(task: BackgroundTask): Promise<TaskCompletion | undefined> { return this.claimCompletionRecord(task) as Promise<TaskCompletion | undefined> }
   async claimCompletionRecord(task: Pick<BackgroundTask, "statusFile">): Promise<TaskCompletionRecord | undefined> { let completion: TaskCompletionRecord; try { completion = JSON.parse(await readFile(task.statusFile, "utf8")) as TaskCompletionRecord } catch { return undefined } try { const claim = await open(`${task.statusFile}.notified`, "wx", 0o600); await claim.close(); return completion } catch { return undefined } }
   async resolveReference(reference: string, owner: string): Promise<{ kind: "found"; task: BackgroundTask } | { kind: "unknown" } | { kind: "ambiguous" }> { const scoped = await this.list(owner); const exact = scoped.find((task) => task.id === reference || task.target === reference); if (exact) return { kind: "found", task: exact }; const normalized = reference.toLowerCase(); const labels = scoped.filter((task) => task.label.toLowerCase() === normalized || safeTaskLabel(task.label) === normalized); if (labels.length === 1) return { kind: "found", task: labels[0]! }; return { kind: labels.length > 1 ? "ambiguous" : "unknown" } }
