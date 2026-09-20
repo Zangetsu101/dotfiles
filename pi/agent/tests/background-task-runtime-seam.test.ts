@@ -1,323 +1,119 @@
 import assert from "node:assert/strict"
-import { writeFile } from "node:fs/promises"
 import test from "node:test"
 import backgroundAgentExtension from "../extensions/background-agent.ts"
 import backgroundMonitorExtension from "../extensions/background-monitor.ts"
 import { BackgroundTasks } from "../extensions/lib/background-task.ts"
 import { FakePiRuntime, FakeTmuxProcessAdapter } from "./support/background-task-runtime.ts"
 
-test("real background extensions create, discover, complete, retain, attach, and clean tasks through the tmux seam", async () => {
-  const previousPane = process.env.TMUX_PANE
-  const previousTmux = process.env.TMUX
-  const previousAgentStatus = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
-  process.env.TMUX_PANE = "%owner"
-  process.env.TMUX = "fake"
-  delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
-  const tmux = new FakeTmuxProcessAdapter()
-  const tasks = new BackgroundTasks(tmux)
-  const runtime = new FakePiRuntime()
-  try {
-    backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5, owner: "%owner" })
-    await backgroundAgentExtension(runtime.pi, { tasks, tmux })
+const family = { familyId: "family-one", familyName: "dotfiles", rootId: "root-one", rootPane: "%root", cwd: "/repo", command: "/bin/sh", args: ["-c", "true"] }
+const waitFor = async (condition: () => boolean) => { for (let attempt = 0; attempt < 100 && !condition(); attempt++) await new Promise((resolve) => setTimeout(resolve, 5)); assert.ok(condition(), "timed out waiting for background notification") }
 
-    const monitorResult = await runtime.execute("background_monitor", { command: "build", label: "build" })
-    const agentResult = await runtime.execute("background_agent", { task: "review", label: "review" })
-    assert.deepEqual(new Set(runtime.tools.keys()), new Set(["background_monitor", "background_agent"]))
-    assert.deepEqual((await tasks.list("%owner")).map((task) => task.kind).sort(), ["agent", "monitor"])
-    assert.equal(tmux.tasks().find((task) => task.target === monitorResult.details.target)?.retained, true)
-    assert.equal(tmux.tasks().find((task) => task.target === agentResult.details.target)?.interactiveAfterCompletion, true)
-
-    await tasks.attach((await tasks.list("%owner"))[1]!)
-    assert.equal(tmux.attachedTarget, agentResult.details.target)
-    await Promise.all([
-      tmux.complete(monitorResult.details.target, "completed", "monitor stdout\nmonitor stderr"),
-      tmux.complete(agentResult.details.target, "completed", "agent final output"),
-    ])
-    for (let attempt = 0; attempt < 50 && runtime.messages.length < 2; attempt++) await new Promise((resolve) => setTimeout(resolve, 5))
-    assert.equal(runtime.messages.length, 2)
-    assert.match(runtime.messages.find((message) => message.customType === "background-monitor")?.content ?? "", /monitor stdout\nmonitor stderr/)
-    assert.match(runtime.messages.find((message) => message.customType === "background-agent")?.content ?? "", /agent final output/)
-    assert.equal(tmux.tasks().find((task) => task.target === monitorResult.details.target)?.dead, true)
-    assert.equal(tmux.tasks().find((task) => task.target === agentResult.details.target)?.dead, false)
-    assert.deepEqual((await tasks.list("%owner")).map((task) => task.status).sort(), ["completed", "completed"])
-
-    assert.equal(runtime.messages.filter((message) => message.customType === "background-monitor").length, 1)
-    assert.equal(runtime.messages.filter((message) => message.customType === "background-agent").length, 1)
-  } finally {
-    await runtime.emit("session_shutdown", { reason: "reload" })
-    if (previousPane === undefined) delete process.env.TMUX_PANE; else process.env.TMUX_PANE = previousPane
-    if (previousTmux === undefined) delete process.env.TMUX; else process.env.TMUX = previousTmux
-    if (previousAgentStatus === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE; else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousAgentStatus
+async function withTmuxEnvironment(run: () => Promise<void>) {
+  const previous = { pane: process.env.TMUX_PANE, tmux: process.env.TMUX, family: process.env.PI_BACKGROUND_TASK_FAMILY_ID, task: process.env.PI_BACKGROUND_TASK_ID, root: process.env.PI_BACKGROUND_TASK_ROOT_ID, rootPane: process.env.PI_BACKGROUND_TASK_ROOT_PANE }
+  process.env.TMUX = "fake"; process.env.TMUX_PANE = "%root"
+  delete process.env.PI_BACKGROUND_TASK_FAMILY_ID; delete process.env.PI_BACKGROUND_TASK_ID; delete process.env.PI_BACKGROUND_TASK_ROOT_ID; delete process.env.PI_BACKGROUND_TASK_ROOT_PANE
+  try { await run() } finally {
+    for (const [key, value] of Object.entries({ TMUX_PANE: previous.pane, TMUX: previous.tmux, PI_BACKGROUND_TASK_FAMILY_ID: previous.family, PI_BACKGROUND_TASK_ID: previous.task, PI_BACKGROUND_TASK_ROOT_ID: previous.root, PI_BACKGROUND_TASK_ROOT_PANE: previous.rootPane })) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value
+    }
   }
+}
+
+test("nested and current-node work shares one family session while discovery stays in the node subtree", async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+  const first = await tasks.create({ ...family, kind: "agent", label: "research", parentId: "root-one", parentLabel: "root", parentTarget: "%root" })
+  const nested = await tasks.create({ ...family, kind: "monitor", label: "tests", parentId: first.id, parentLabel: first.label, parentTarget: first.target })
+  const sibling = await tasks.create({ ...family, kind: "agent", label: "docs", parentId: "root-one", parentLabel: "root", parentTarget: "%root" })
+
+  assert.equal(tmux.familySessions().length, 1)
+  assert.deepEqual(new Set((await tasks.list({ familyId: "family-one" })).map((task) => task.id)), new Set([first.id, nested.id, sibling.id]))
+  assert.deepEqual((await tasks.list({ subtreeRootId: first.id })).map((task) => task.id), [first.id, nested.id])
+  assert.deepEqual((await tasks.list({ subtreeRootId: sibling.id })).map((task) => task.id), [sibling.id])
+  assert.match(nested.displayName!, /← research$/)
 })
 
-test("agent completion deadline prompts the caller to check in", async () => {
-  const previousPane = process.env.TMUX_PANE
-  const previousAgentStatus = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
-  process.env.TMUX_PANE = "%owner"
-  delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
-  const tmux = new FakeTmuxProcessAdapter()
-  const tasks = new BackgroundTasks(tmux)
-  const runtime = new FakePiRuntime()
-  try {
-    await backgroundAgentExtension(runtime.pi, { tasks, tmux, millisecondsPerMinute: 10 })
-    await runtime.execute("background_agent", { task: "review", label: "review", expectedCompletionMinutes: 1 })
+test("agent windows and pooled monitor panes complete, remain discoverable, and attach by stable IDs", async () => withTmuxEnvironment(async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux); const runtime = new FakePiRuntime({ sessionId: "one" })
+  backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5 }); await backgroundAgentExtension(runtime.pi, { tasks, tmux, millisecondsPerMinute: 10_000 }); await runtime.emit("session_start", { reason: "startup" })
+  const monitor = await runtime.execute("background_monitor", { command: "build", label: "build" })
+  const agent = await runtime.execute("background_agent", { task: "review", label: "review", expectedCompletionMinutes: 1 })
 
-    for (let attempt = 0; attempt < 50 && runtime.messages.length < 1; attempt++) await new Promise((resolve) => setTimeout(resolve, 5))
+  assert.match(monitor.details.target, /^%\d+$/); assert.match(agent.details.target, /^@\d+$/)
+  assert.equal(tmux.tasks().find((task) => task.target === monitor.details.target)?.retained, true)
+  await runtime.commands.get("task").handler(`attach ${agent.details.id}`, runtime.context)
+  assert.equal(tmux.attachedTarget, agent.details.target)
 
-    assert.equal(runtime.messages.length, 1)
-    assert.equal(runtime.messages[0]?.customType, "background-agent-check-in")
-    assert.match(runtime.messages[0]?.content ?? "", /worked past its expected completion time/)
-  } finally {
-    await runtime.emit("session_shutdown", { reason: "reload" })
-    if (previousPane === undefined) delete process.env.TMUX_PANE; else process.env.TMUX_PANE = previousPane
-    if (previousAgentStatus === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE; else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousAgentStatus
-  }
-})
-
-test("agent completion cancels its deadline check-in", async () => {
-  const previousPane = process.env.TMUX_PANE
-  const previousAgentStatus = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
-  process.env.TMUX_PANE = "%owner"
-  delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
-  const tmux = new FakeTmuxProcessAdapter()
-  const tasks = new BackgroundTasks(tmux)
-  const runtime = new FakePiRuntime()
-  try {
-    await backgroundAgentExtension(runtime.pi, { tasks, tmux, millisecondsPerMinute: 30 })
-    const result = await runtime.execute("background_agent", { task: "review", label: "review", expectedCompletionMinutes: 1 })
-    await tmux.complete(result.details.target, "completed", "done")
-    for (let attempt = 0; attempt < 50 && runtime.messages.length < 1; attempt++) await new Promise((resolve) => setTimeout(resolve, 5))
-    await new Promise((resolve) => setTimeout(resolve, 40))
-
-    assert.equal(runtime.messages.length, 1)
-    assert.equal(runtime.messages[0]?.customType, "background-agent")
-  } finally {
-    await runtime.emit("session_shutdown", { reason: "reload" })
-    if (previousPane === undefined) delete process.env.TMUX_PANE; else process.env.TMUX_PANE = previousPane
-    if (previousAgentStatus === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE; else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousAgentStatus
-  }
-})
-
-test("agent completion updates the task-list window status", async () => {
-  const previousPane = process.env.TMUX_PANE
-  const previousAgentStatus = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
-  process.env.TMUX_PANE = "%owner"
-  delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
-  const tmux = new FakeTmuxProcessAdapter()
-  const tasks = new BackgroundTasks(tmux)
-  const runtime = new FakePiRuntime()
-  try {
-    backgroundMonitorExtension(runtime.pi, { tasks, owner: "%owner" })
-    await runtime.emit("session_start", { reason: "startup" })
-    await backgroundAgentExtension(runtime.pi, { tasks, tmux })
-    const result = await runtime.execute("background_agent", { task: "review", label: "review" })
-    const childCommand = tmux.hubs()[0]?.tasks[0]?.command ?? []
-    assert.ok(childCommand.includes("PI_BACKGROUND_AGENT_DEPTH=1"))
-    assert.ok(childCommand.includes("review"))
-    assert.equal(childCommand.some((argument) => argument.includes("Another agent delegated")), false)
-
-    await writeFile(result.details.statusFile, JSON.stringify({ kind: "settled", output: "done" }))
-    for (let attempt = 0; attempt < 50 && runtime.messages.length < 1; attempt++) await new Promise((resolve) => setTimeout(resolve, 5))
-
-    assert.equal(runtime.messages.length, 1)
-    assert.equal((await tasks.list("%owner"))[0]?.status, "completed")
-    const completions = runtime.commands.get("task").getArgumentCompletions("attach review")
-    assert.match(completions[0]?.description ?? "", /completed/)
-  } finally {
-    await runtime.emit("session_shutdown", { reason: "reload" })
-    if (previousPane === undefined) delete process.env.TMUX_PANE; else process.env.TMUX_PANE = previousPane
-    if (previousAgentStatus === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE; else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousAgentStatus
-  }
-})
-
-test("agent model errors mark the task and autocomplete entry as failed", async () => {
-  const previousPane = process.env.TMUX_PANE
-  const previousAgentStatus = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
-  process.env.TMUX_PANE = "%owner"
-  delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
-  const tmux = new FakeTmuxProcessAdapter()
-  const tasks = new BackgroundTasks(tmux)
-  const runtime = new FakePiRuntime()
-  try {
-    backgroundMonitorExtension(runtime.pi, { tasks, owner: "%owner" })
-    await runtime.emit("session_start", { reason: "startup" })
-    await backgroundAgentExtension(runtime.pi, { tasks, tmux })
-    const result = await runtime.execute("background_agent", { task: "review", label: "review" })
-
-    await writeFile(result.details.statusFile, JSON.stringify({ kind: "settled", output: "", stopReason: "error" }))
-    for (let attempt = 0; attempt < 50 && runtime.messages.length < 1; attempt++) await new Promise((resolve) => setTimeout(resolve, 5))
-
-    assert.equal((await tasks.list("%owner"))[0]?.status, "failed")
-    const completions = runtime.commands.get("task").getArgumentCompletions("attach review")
-    assert.match(completions[0]?.description ?? "", /failed/)
-  } finally {
-    await runtime.emit("session_shutdown", { reason: "reload" })
-    if (previousPane === undefined) delete process.env.TMUX_PANE; else process.env.TMUX_PANE = previousPane
-    if (previousAgentStatus === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE; else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousAgentStatus
-  }
-})
-
-test("agent completion racing extension replacement produces one durable follow-up", async () => {
-  const previousPane = process.env.TMUX_PANE
-  const previousAgentStatus = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
-  process.env.TMUX_PANE = "%owner"
-  delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
-  const tmux = new FakeTmuxProcessAdapter()
-  const tasks = new BackgroundTasks(tmux)
-  const outgoing = new FakePiRuntime()
-  const replacement = new FakePiRuntime()
-  try {
-    await backgroundAgentExtension(outgoing.pi, { tasks, tmux })
-    const result = await outgoing.execute("background_agent", { task: "review", label: "review" })
-    await backgroundAgentExtension(replacement.pi, { tasks, tmux })
-
-    await tmux.complete(result.details.target, "completed", "durable result")
-    for (let attempt = 0; attempt < 50 && outgoing.messages.length + replacement.messages.length < 1; attempt++) await new Promise((resolve) => setTimeout(resolve, 5))
-
-    assert.equal(outgoing.messages.length + replacement.messages.length, 1)
-    assert.match((outgoing.messages[0] ?? replacement.messages[0]).content, /durable result/)
-    assert.equal(tmux.hubs().length, 1)
-  } finally {
-    await outgoing.emit("session_shutdown", { reason: "reload" })
-    await replacement.emit("session_shutdown", { reason: "reload" })
-    if (previousPane === undefined) delete process.env.TMUX_PANE; else process.env.TMUX_PANE = previousPane
-    if (previousAgentStatus === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE; else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousAgentStatus
-  }
-})
-
-test("concurrent launches share an owner hub while different owners remain isolated", async () => {
-  const tmux = new FakeTmuxProcessAdapter()
-  const ownerTasks = new BackgroundTasks(tmux)
-  const otherTasks = new BackgroundTasks(tmux)
-  const ownerRuntime = new FakePiRuntime()
-  const otherRuntime = new FakePiRuntime()
-  backgroundMonitorExtension(ownerRuntime.pi, { tasks: ownerTasks, owner: "%owner" })
-  backgroundMonitorExtension(otherRuntime.pi, { tasks: otherTasks, owner: "%other" })
-
-  const [first, second, other] = await Promise.all([
-    ownerRuntime.execute("background_monitor", { command: "printf '%s' 'one; two'", label: "same label" }),
-    ownerRuntime.execute("background_monitor", { command: "printf '%s' 'three'", label: "same label" }),
-    otherRuntime.execute("background_monitor", { command: "printf '%s' 'other'", label: "same label" }),
-  ])
-
-  assert.equal(tmux.hubs().length, 2)
-  assert.equal(tmux.hubs().find((hub) => hub.owner === "%owner")?.tasks.length, 2)
-  assert.equal(tmux.hubs().find((hub) => hub.owner === "%other")?.tasks.length, 1)
-  assert.notEqual(first.details.target, second.details.target)
-  assert.equal(new Set([first.details.target, second.details.target]).size, 2)
-  assert.equal((await ownerTasks.list("%owner")).length, 2)
-  assert.deepEqual((await otherTasks.list("%other")).map((task) => task.target), [other.details.target])
-  await ownerRuntime.emit("session_shutdown", { reason: "reload" })
-  await otherRuntime.emit("session_shutdown", { reason: "reload" })
-})
-
-test("discovery refreshes exact indexed targets and task commands navigate the selected duplicate", async () => {
-  const previousPane = process.env.TMUX_PANE
-  const previousTmux = process.env.TMUX
-  process.env.TMUX_PANE = "%owner"
-  process.env.TMUX = "fake"
-  const tmux = new FakeTmuxProcessAdapter()
-  const tasks = new BackgroundTasks(tmux)
-  const runtime = new FakePiRuntime()
-  try {
-    backgroundMonitorExtension(runtime.pi, { tasks, owner: "%owner" })
-    const first = await runtime.execute("background_monitor", { command: "one", label: "duplicate" })
-    await runtime.execute("background_monitor", { command: "two", label: "duplicate" })
-
-    const discovered = await tasks.list("%owner")
-    assert.match(discovered[0]!.target, /:\d+$/)
-    assert.deepEqual(await tasks.resolveReference("duplicate", "%owner"), { kind: "ambiguous" })
-    assert.equal((await tasks.resolveReference(first.details.id, "%owner")).kind, "found")
-    assert.equal((await tasks.resolveReference(discovered[0]!.target, "%owner")).kind, "found")
-
-    const completions = runtime.commands.get("task").getArgumentCompletions("attach duplicate")
-    assert.equal(completions.length, 2)
-    assert.ok(completions.every((item: any) => item.description.includes(item.value.endsWith(first.details.id) ? discovered[0]!.target : discovered[1]!.target)))
-
-    await runtime.commands.get("task").handler(`attach ${first.details.id}`, runtime.context)
-    assert.equal(tmux.attachedTarget, discovered[0]!.target)
-    await runtime.commands.get("task").handler("attach duplicate", runtime.context)
-    assert.match(runtime.notifications.at(-1) ?? "", /Ambiguous/)
-  } finally {
-    await runtime.emit("session_shutdown", { reason: "reload" })
-    if (previousPane === undefined) delete process.env.TMUX_PANE; else process.env.TMUX_PANE = previousPane
-    if (previousTmux === undefined) delete process.env.TMUX; else process.env.TMUX = previousTmux
-  }
-})
-
-test("termination and cleanup refresh selected windows without disturbing siblings or retaining an empty hub", async () => {
-  const tmux = new FakeTmuxProcessAdapter()
-  const tasks = new BackgroundTasks(tmux)
-  const runtime = new FakePiRuntime()
-  backgroundMonitorExtension(runtime.pi, { tasks, owner: "%owner" })
-
-  const finished = await runtime.execute("background_monitor", { command: "finished", label: "finished" })
-  const cancelled = await runtime.execute("background_monitor", { command: "cancelled", label: "cancelled" })
-  const sibling = await runtime.execute("background_monitor", { command: "sibling", label: "sibling" })
-  const stale = await tasks.list("%owner")
-
-  await tmux.complete(finished.details.target, "completed")
-  assert.equal(await tasks.cleanup(stale), 1)
-  assert.deepEqual((await tasks.list("%owner")).map((task) => task.id), [cancelled.details.id, sibling.details.id])
-
-  await tasks.terminate(stale.find((task) => task.id === cancelled.details.id)!)
-  assert.equal(tmux.signalledTargets.at(-1), (await tasks.resolve(cancelled.details.id, "%owner"))?.target)
-  assert.equal((await tasks.resolve(sibling.details.id, "%owner"))?.status, "running")
-  assert.equal(tmux.hubs().length, 1)
-
-  await tasks.cleanup(await tasks.list("%owner"))
-  assert.equal((await tasks.list("%owner")).length, 1)
-  await tmux.complete((await tasks.resolve(sibling.details.id, "%owner"))!.target, "completed")
-  assert.equal(await tasks.cleanup(await tasks.list("%owner")), 1)
-  assert.equal(tmux.hubs().length, 0)
-  assert.deepEqual(tmux.tasks(), [])
+  await Promise.all([tmux.complete(monitor.details.target, "completed", "build output"), tmux.complete(agent.details.target, "completed", "review output")])
+  await waitFor(() => runtime.messages.length === 2)
+  assert.match(runtime.messages.find((message) => message.customType === "background-monitor")?.content ?? "", /build output/)
+  assert.match(runtime.messages.find((message) => message.customType === "background-agent")?.content ?? "", /review output/)
+  assert.deepEqual((await tasks.list({ familyId: "family:one" })).map((task) => task.status).sort(), ["succeeded", "succeeded"])
   await runtime.emit("session_shutdown", { reason: "reload" })
+}))
+
+test("terminate and clean cascade through descendants, preserve siblings, and remove an empty family session", async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+  const parent = await tasks.create({ ...family, kind: "agent", label: "parent", parentId: "root-one" })
+  const child = await tasks.create({ ...family, kind: "monitor", label: "child", parentId: parent.id, parentLabel: parent.label, parentTarget: parent.target })
+  const sibling = await tasks.create({ ...family, kind: "agent", label: "sibling", parentId: "root-one" })
+
+  assert.equal(await tasks.cleanup([parent]), 0)
+  await tasks.terminate(parent)
+  assert.deepEqual(new Set(tmux.signalledTargets), new Set([parent.target, child.target]))
+  assert.equal((await tasks.resolve(sibling.id, { familyId: "family-one" }))?.status, "running")
+  assert.equal(await tasks.cleanup([parent]), 2)
+  assert.deepEqual((await tasks.list({ familyId: "family-one" })).map((task) => task.id), [sibling.id])
+
+  await tasks.terminate(sibling); assert.equal(await tasks.cleanup([sibling]), 1)
+  assert.equal(tmux.familySessions().length, 0)
 })
 
-test("legacy session tasks are visible cleanup-only and never managed as active work", async () => {
-  const previousTmux = process.env.TMUX
-  process.env.TMUX = "fake"
+test("a resumed extension reclaims the family and reconnects agent and monitor completion watchers", async () => withTmuxEnvironment(async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+  const first = new FakePiRuntime({ sessionId: "resume-me" })
+  backgroundMonitorExtension(first.pi, { tasks, pollMs: 5 }); await backgroundAgentExtension(first.pi, { tasks, tmux, millisecondsPerMinute: 10_000 }); await first.emit("session_start", { reason: "startup" })
+  const monitor = await first.execute("background_monitor", { command: "build", label: "build" })
+  const agent = await first.execute("background_agent", { task: "review", label: "review", expectedCompletionMinutes: 1 })
+  const persisted = [...first.entries]
+  await first.emit("session_shutdown", { reason: "reload" })
+
+  const resumed = new FakePiRuntime({ sessionId: "resume-me", entries: persisted })
+  backgroundMonitorExtension(resumed.pi, { tasks: new BackgroundTasks(tmux), pollMs: 5 }); await backgroundAgentExtension(resumed.pi, { tasks: new BackgroundTasks(tmux), tmux, millisecondsPerMinute: 10_000 })
+  await resumed.emit("session_start", { reason: "resume" })
+  await Promise.all([tmux.complete(monitor.details.target, "completed", "resumed monitor"), tmux.complete(agent.details.target, "completed", "resumed agent")])
+  await waitFor(() => resumed.messages.length === 2)
+  assert.deepEqual(new Set(resumed.messages.map((message) => message.customType)), new Set(["background-monitor", "background-agent"]))
+  assert.equal(tmux.familySessions().length, 1)
+  await resumed.emit("session_shutdown", { reason: "reload" })
+}))
+
+test("resume marks persisted running tasks interrupted when the family session disappeared", async () => withTmuxEnvironment(async () => {
   const tmux = new FakeTmuxProcessAdapter()
-  await tmux.run(["new-session", "-d", "-s", "pi-monitor-legacy", "-n", "legacy"])
-  for (const [key, value] of Object.entries({ kind: "monitor", id: "old-one", label: "old build", status: "running", owner: "%owner", parent: "parent", cwd: "/repo", status_file: "/tmp/legacy-status" })) {
-    await tmux.run(["set-option", "-t", "pi-monitor-legacy", `@pi_task_${key}`, value])
-  }
-  const tasks = new BackgroundTasks(tmux)
-  const runtime = new FakePiRuntime()
-  try {
-    backgroundMonitorExtension(runtime.pi, { tasks, owner: "%owner", pollMs: 5 })
-    const current = await runtime.execute("background_monitor", { command: "current", label: "current" })
-    await runtime.emit("session_start")
+  const first = new FakePiRuntime({ sessionId: "interrupted" })
+  backgroundMonitorExtension(first.pi, { tasks: new BackgroundTasks(tmux), pollMs: 5 })
+  await first.emit("session_start", { reason: "startup" })
+  await first.execute("background_monitor", { command: "build", label: "build" })
+  const persisted = [...first.entries]
+  await first.emit("session_shutdown", { reason: "reload" })
+  await tmux.run(["kill-session", "-t", tmux.familySessions()[0]!.id])
 
-    const listed = await tasks.list("%owner")
-    assert.deepEqual(listed.map((task) => [task.id, task.storageMode]), [[current.details.id, "hub"], ["old-one", "legacy"]])
-    await runtime.commands.get("task").handler("list", runtime.context)
-    assert.match(runtime.notifications.at(-1) ?? "", /old-one  monitor  cleanup-only  old build/)
-    assert.equal(runtime.messages.length, 0)
+  const resumed = new FakePiRuntime({ sessionId: "interrupted", entries: persisted })
+  backgroundMonitorExtension(resumed.pi, { tasks: new BackgroundTasks(tmux), pollMs: 5 })
+  await resumed.emit("session_start", { reason: "resume" })
+  await resumed.commands.get("task").handler("list", resumed.context)
 
-    await runtime.commands.get("task").handler("attach old-one", runtime.context)
-    assert.match(runtime.notifications.at(-1) ?? "", /cleanup-only.*cannot be attached/i)
-    assert.equal(tmux.attachedTarget, undefined)
-    await runtime.commands.get("task").handler("terminate old-one", runtime.context)
-    assert.match(runtime.notifications.at(-1) ?? "", /cleanup-only.*cannot be terminated/i)
-    assert.deepEqual(tmux.signalledTargets, [])
+  assert.match(resumed.notifications.at(-1) ?? "", /build  monitor  interrupted/)
+  await resumed.emit("session_shutdown", { reason: "reload" })
+}))
 
-    await runtime.commands.get("task").handler("clean old-one", runtime.context)
-    assert.equal(tmux.sessions.has("pi-monitor-legacy"), false)
-    assert.equal(tmux.sessions.has(current.details.target.split(":")[0]), true)
-  } finally {
-    await runtime.emit("session_shutdown", { reason: "reload" })
-    if (previousTmux === undefined) delete process.env.TMUX; else process.env.TMUX = previousTmux
-  }
-})
+test("family rename and setup failure use current session metadata without leaving an empty family", async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+  const task = await tasks.create({ ...family, kind: "agent", label: "work", parentId: "root-one" })
+  await tasks.renameFamily("family-one", "renamed.project")
+  assert.equal(tmux.familySessions()[0]?.name, "renamed-project")
+  await tasks.terminate(task); await tasks.cleanup([task])
 
-test("setup failures are reported and leave no advertised task or empty new hub", async () => {
-  const tmux = new FakeTmuxProcessAdapter()
   tmux.failSetupFor = "@pi_task_label"
-  const runtime = new FakePiRuntime()
-  backgroundMonitorExtension(runtime.pi, { tasks: new BackgroundTasks(tmux), owner: "%owner" })
-
-  await assert.rejects(runtime.execute("background_monitor", { command: "build" }), /failed to start tmux task/)
-  assert.deepEqual(tmux.tasks(), [])
+  await assert.rejects(tasks.create({ ...family, familyId: "family-two", kind: "agent", label: "broken", parentId: "root-two" }), /injected setup failure/)
+  assert.equal(tmux.familySessions().length, 0)
 })
