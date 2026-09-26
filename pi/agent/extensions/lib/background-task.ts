@@ -244,15 +244,13 @@ export class BackgroundTasks {
   }
 
   private async familySession(familyId: string): Promise<string> {
-    const cached = this.sessions.get(familyId)
-    if (cached) return cached
-
     const output = await this.tmux.run(["list-sessions", "-F", "#{session_id}\t#{@pi_task_family_id}"]).catch(() => "")
     const session = output
       .split("\n")
       .map((line) => line.split("\t"))
       .find(([, id]) => id === familyId)?.[0] ?? ""
     if (session) this.sessions.set(familyId, session)
+    else this.sessions.delete(familyId)
     return session
   }
 
@@ -277,8 +275,11 @@ export class BackgroundTasks {
     ])
     for (const task of await this.list({ familyId: family.familyId })) {
       task.rootPane = family.rootPane
+      if (task.parentId === family.rootId) task.parentTarget = family.rootPane
       this.known.set(task.id, task)
-      await this.tmux.run(["set-option", task.kind === "agent" ? "-w" : "-p", "-t", task.target, "@pi_task_root_pane", family.rootPane])
+      const scope = task.kind === "agent" ? "-w" : "-p"
+      await this.tmux.run(["set-option", scope, "-t", task.target, "@pi_task_root_pane", family.rootPane])
+      if (task.parentId === family.rootId) await this.tmux.run(["set-option", scope, "-t", task.target, "@pi_task_parent_target", family.rootPane])
     }
   }
   async renameFamily(familyId: string, label: string): Promise<void> {
@@ -405,7 +406,7 @@ export class BackgroundTasks {
     return "switched"
   }
 
-  async terminate(task: BackgroundTask, reason = "terminated by user"): Promise<void> {
+  async terminate(task: BackgroundTask, reason = "terminated by user"): Promise<BackgroundTask[]> {
     const all = await this.list(task.familyId ? { familyId: task.familyId } : { subtreeRootId: task.parentId ?? task.id })
     const active = this.subtree(task, all).filter((candidate) =>
       candidate.status === "running" || (candidate.kind === "agent" && candidate.status !== "terminated" && candidate.status !== "interrupted"),
@@ -416,6 +417,7 @@ export class BackgroundTasks {
       if (current.kind === "agent") await this.tmux.run(["send-keys", "-t", current.target, "C-d"])
       await this.setStatus(current, "terminated")
     }
+    return active
   }
   async cleanup(tasks: BackgroundTask[]): Promise<number> {
     let removed = 0

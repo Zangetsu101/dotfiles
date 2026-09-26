@@ -212,6 +212,10 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
   })
 
 
+  const terminateTask = async (selected: BackgroundTask, reason?: string): Promise<void> => {
+    for (const task of await tasks.terminate(selected, reason)) pi.events.emit(BACKGROUND_TASK_STATUS_CHANGED, task)
+  }
+
   const cleanTasks = async (selected: BackgroundTask[]): Promise<number> => {
     const all = await tasks.list({ subtreeRootId: scope() })
     const candidates = selected.flatMap((task) => tasks.subtree(task, all))
@@ -250,7 +254,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     if (action === "terminate") {
       const terminable = task.status === "running" || (task.kind === "agent" && task.status !== "terminated" && task.status !== "interrupted")
       if (!terminable) { ctx.ui.notify(`Task ${task.id} is already ${task.status}.`, "warning"); return }
-      await tasks.terminate(task); ctx.ui.notify(`Terminated ${task.id}.`, "info"); return
+      await terminateTask(task); ctx.ui.notify(`Terminated ${task.id}.`, "info"); return
     }
     ctx.ui.notify("Usage: /task list|attach|parent|return|terminate|clean [task]", "warning")
   } })
@@ -279,7 +283,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
             }
             return true
           })
-          for (const task of roots) await tasks.terminate(task, "Root Pi quit")
+          for (const task of roots) await terminateTask(task, "Root Pi quit")
         }
       }
       for (const activity of activities.values()) pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)

@@ -32,6 +32,28 @@ test("nested and current-node work shares one family session while discovery sta
   assert.match(nested.displayName!, /← research$/)
 })
 
+test("resuming in a new root pane updates direct children's parent navigation", async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+  const child = await tasks.create({ ...family, kind: "agent", label: "research", parentId: "root-one", parentTarget: "%root" })
+
+  await tasks.reconcileFamily({ familyId: family.familyId, familyName: family.familyName, rootId: family.rootId, rootPane: "%resumed" })
+
+  assert.equal((await tasks.resolve(child.id, { familyId: family.familyId }))?.parentTarget, "%resumed")
+})
+
+test("a vanished family session is recreated for new work in the same process", async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+  await tasks.create({ ...family, kind: "agent", label: "first", parentId: "root-one" })
+  const oldSession = tmux.familySessions()[0]!.id
+  await tmux.run(["kill-session", "-t", oldSession])
+
+  const next = await tasks.create({ ...family, kind: "agent", label: "second", parentId: "root-one" })
+
+  assert.equal(tmux.familySessions().length, 1)
+  assert.notEqual(tmux.familySessions()[0]!.id, oldSession)
+  assert.equal((await tasks.resolve(next.id, { familyId: family.familyId }))?.id, next.id)
+})
+
 test("agent windows and pooled monitor panes complete, remain discoverable, and attach by stable IDs", async () => withTmuxEnvironment(async () => {
   const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux); const runtime = new FakePiRuntime({ sessionId: "one" })
   backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5 }); await backgroundAgentExtension(runtime.pi, { tasks, tmux, millisecondsPerMinute: 10_000 }); await runtime.emit("session_start", { reason: "startup" })
@@ -100,6 +122,41 @@ test("a resumed extension reclaims the family and reconnects agent and monitor c
   assert.deepEqual(new Set(resumed.messages.map((message) => message.customType)), new Set(["background-monitor", "background-agent"]))
   assert.equal(tmux.familySessions().length, 1)
   await resumed.emit("session_shutdown", { reason: "reload" })
+}))
+
+test("switching conversation trees stops notifications from the old family's agents", async () => withTmuxEnvironment(async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+  const runtime = new FakePiRuntime({ sessionId: "old-tree" })
+  await backgroundAgentExtension(runtime.pi, { tasks, tmux, pollMs: 5 })
+  await runtime.emit("session_start", { reason: "startup" })
+  const agent = await runtime.execute("background_agent", { task: "review", label: "review", expectedCompletionMinutes: 1 })
+  runtime.context.sessionManager.getSessionId = () => "new-tree"
+  runtime.entries.length = 0
+  await runtime.emit("session_tree")
+
+  await tmux.complete(agent.details.target, "completed", "old tree result")
+  await new Promise((resolve) => setTimeout(resolve, 40))
+
+  assert.equal(runtime.messages.length, 0)
+  await runtime.emit("session_shutdown", { reason: "reload" })
+}))
+
+test("terminated subtree status is persisted before resume", async () => withTmuxEnvironment(async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+  const runtime = new FakePiRuntime({ sessionId: "terminated" })
+  backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5 }); await backgroundAgentExtension(runtime.pi, { tasks, tmux, pollMs: 5 }); await runtime.emit("session_start", { reason: "startup" })
+  const agent = await runtime.execute("background_agent", { task: "review", label: "review", expectedCompletionMinutes: 1 })
+  const parent = (await tasks.resolve(agent.details.id, { familyId: "family:terminated" }))!
+  const child = await tasks.create({ ...family, familyId: "family:terminated", rootId: "root:terminated", kind: "monitor", label: "tests", parentId: parent.id, parentLabel: parent.label, parentTarget: parent.target })
+  runtime.pi.events.emit("pi:background-task-created", child)
+
+  await runtime.commands.get("task").handler(`terminate ${agent.details.id}`, runtime.context)
+
+  for (const id of [parent.id, child.id]) {
+    const records = runtime.entries.filter((entry) => entry.type === "custom" && entry.customType === "background-task-record" && entry.data?.id === id)
+    assert.equal(records.at(-1)?.data.status, "terminated")
+  }
+  await runtime.emit("session_shutdown", { reason: "reload" })
 }))
 
 test("cleaned tasks stay removed after the conversation resumes", async () => withTmuxEnvironment(async () => {

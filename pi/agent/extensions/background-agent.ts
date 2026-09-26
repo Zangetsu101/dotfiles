@@ -335,6 +335,8 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   pi.on("session_tree", async (_event, ctx) => {
     for (const watcher of watchers.values()) watcher.close()
     watchers.clear()
+    for (const timer of reconciliationTimers.values()) clearInterval(timer)
+    reconciliationTimers.clear()
     await restoreFamily("tree", ctx)
     for (const agent of agentsCache) if (agent.statusFile) monitor(agent)
   })

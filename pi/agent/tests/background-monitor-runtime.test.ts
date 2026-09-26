@@ -28,6 +28,19 @@ class SharedTasks {
     }
     return this.tasks.filter((task) => descendants.has(task.id))
   }
+  subtree(root: BackgroundTask, tasks: BackgroundTask[]) {
+    const descendants = new Set([root.id])
+    for (let changed = true; changed;) {
+      changed = false
+      for (const task of tasks) {
+        if (task.parentId && descendants.has(task.parentId) && !descendants.has(task.id)) {
+          descendants.add(task.id)
+          changed = true
+        }
+      }
+    }
+    return tasks.filter((task) => descendants.has(task.id))
+  }
   async claimCompletion(task: BackgroundTask) {
     await this.claimBarrier
     const completion = this.completions.get(task.id)
@@ -38,10 +51,11 @@ class SharedTasks {
   async claimCompletionOrReconcile(task: BackgroundTask) { return this.claimCompletion(task) }
   async setStatus(task: BackgroundTask, status: BackgroundTask["status"]) { task.status = status }
   async terminate(task: BackgroundTask, reason = "terminated by user") {
-    if (task.status !== "running") return
+    if (task.status !== "running") return []
     this.terminations.push({ id: task.id, reason })
     this.completions.set(task.id, { status: "cancelled", reason })
     task.status = "terminated"
+    return [task]
   }
 }
 
