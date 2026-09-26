@@ -21,13 +21,14 @@ export NVM_DIR="$HOME/.nvm"
 [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
 
 export PNPM_HOME="$HOME/.local/share/pnpm"
-[ -d "$PNPM_HOME/bin" ] && path_prepend "$PNPM_HOME/bin"
+[ -d "$PNPM_HOME" ] && path_prepend "$PNPM_HOME"
 
 [ -d "$HOME/.maestro/bin" ] && path_append "$HOME/.maestro/bin"
 
 if [ -d "$HOME/Android/Sdk" ]; then
     export ANDROID_HOME="$HOME/Android/Sdk"
     path_append "$ANDROID_HOME/platform-tools"
+    path_append "$ANDROID_HOME/cmdline-tools/latest/bin"
 fi
 
 command -v kubectl >/dev/null && source <(kubectl completion bash)
