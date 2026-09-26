@@ -3,7 +3,8 @@ if command -v keychain >/dev/null; then
 fi
 
 if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null \
-    && command -v powershell.exe >/dev/null \
+    && { command -v powershell.exe >/dev/null \
+        || [ -x "$(wslpath -u 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe')" ]; } \
     && [ -x "$HOME/.dotfiles/bash/wsl-ssh-askpass" ]; then
     export SSH_ASKPASS="$HOME/.dotfiles/bash/wsl-ssh-askpass"
 elif [ -x /usr/bin/ssh-askpass ]; then
