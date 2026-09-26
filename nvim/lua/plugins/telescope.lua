@@ -22,18 +22,18 @@ return {
     { 'nvim-tree/nvim-web-devicons' },
   },
   config = function()
-    local telescope = require('telescope')
-    local actions = require('telescope.actions')
-    local utils = require('telescope.utils')
-    local action_state = require('telescope.actions.state')
-    local action_layout = require('telescope.actions.layout')
+    local telescope = require 'telescope'
+    local actions = require 'telescope.actions'
+    local utils = require 'telescope.utils'
+    local action_state = require 'telescope.actions.state'
+    local action_layout = require 'telescope.actions.layout'
 
     -- Path display styles cycled with <C-g> while a picker is open.
     local path_display_styles = {
-      {},               -- lua/plugins/telescope.lua
-      { shorten = 3 },  -- lua/plu/telescope.lua
-      { shorten = 1 },  -- l/p/telescope.lua
-      { 'tail' },       -- telescope.lua
+      {}, -- lua/plugins/telescope.lua
+      { shorten = 3 }, -- lua/plu/telescope.lua
+      { shorten = 1 }, -- l/p/telescope.lua
+      { 'tail' }, -- telescope.lua
     }
     local path_display_index = 1
 
@@ -57,10 +57,20 @@ return {
       end
     end
 
+    local show_ignored = false
+    local function toggle_ignored(prompt_bufnr)
+      local picker = action_state.get_current_picker(prompt_bufnr)
+      local prompt = picker:_get_prompt()
+      show_ignored = not show_ignored
+      actions.close(prompt_bufnr)
+      require('telescope.builtin').find_files { hidden = true, no_ignore = show_ignored, default_text = prompt }
+    end
+
     telescope.setup {
       defaults = {
         file_ignore_patterns = {
-          "^.git/"
+          '.git/',
+          'node_modules/',
         },
         path_display = path_display,
         mappings = {
@@ -72,69 +82,78 @@ return {
             ['<C-g>'] = cycle_path_display,
             ['<M-p>'] = action_layout.toggle_preview,
           },
-        }
+        },
       },
       pickers = {
         find_files = {
-          hidden = true
+          hidden = true,
+          mappings = {
+            i = { ['<C-i>'] = toggle_ignored },
+            n = { ['<C-i>'] = toggle_ignored },
+          },
         },
         grep_string = {
-          additional_args = { "--hidden" }
+          additional_args = { '--hidden' },
         },
         live_grep = {
-          additional_args = { "--hidden" }
+          additional_args = { '--hidden' },
         },
         buffers = {
           mappings = {
             n = {
-              x = actions.delete_buffer
-            }
-          }
-        }
-      }
+              x = actions.delete_buffer,
+            },
+          },
+        },
+      },
     }
 
     pcall(telescope.load_extension, 'fzf')
     pcall(telescope.load_extension, 'ui-select')
 
-    local builtin = require('telescope.builtin')
+    local builtin = require 'telescope.builtin'
 
     local function buf_vtext()
-      local a_orig = vim.fn.getreg('a')
+      local a_orig = vim.fn.getreg 'a'
       local mode = vim.fn.mode()
       if mode ~= 'v' and mode ~= 'V' then
-        vim.cmd([[normal! gv]])
+        vim.cmd [[normal! gv]]
       end
-      vim.cmd([[silent! normal! "aygv]])
-      local text = vim.fn.getreg('a')
+      vim.cmd [[silent! normal! "aygv]]
+      local text = vim.fn.getreg 'a'
       vim.fn.setreg('a', a_orig)
       return text
     end
 
     local function search_vtext()
       local vtext = buf_vtext()
-      builtin.grep_string({ search = vtext })
+      builtin.grep_string { search = vtext }
     end
 
     vim.keymap.set('n', '<leader>?', builtin.oldfiles, { desc = '[?] Find recently opened files' })
     vim.keymap.set('n', '<leader><space>', builtin.buffers, { desc = '[ ] Find existing buffers' })
-    vim.keymap.set('n', '<leader>/', builtin.current_buffer_fuzzy_find,
-      { desc = '[/] Fuzzily search in current buffer]' })
-    vim.keymap.set('n', '<leader>sf', function() builtin.find_files({ hidden = true }) end,
-      { desc = '[S]earch [F]iles' })
+    vim.keymap.set(
+      'n',
+      '<leader>/',
+      builtin.current_buffer_fuzzy_find,
+      { desc = '[/] Fuzzily search in current buffer]' }
+    )
+    vim.keymap.set('n', '<leader>sf', function()
+      show_ignored = false
+      builtin.find_files { hidden = true }
+    end, { desc = '[S]earch [F]iles' })
     vim.keymap.set('n', '<leader>sh', builtin.help_tags, { desc = '[S]earch [H]elp' })
     vim.keymap.set('n', '<leader>ss', builtin.lsp_document_symbols, { desc = '[S]earch [S]ymbols' })
     vim.keymap.set('n', '<leader>sw', builtin.grep_string, { desc = '[S]earch current [W]ord' })
     vim.keymap.set('v', '<leader>sw', search_vtext, { desc = '[S]earch selection' })
-    vim.keymap.set('n', '<leader>sg', function() builtin.live_grep({ hidden = true }) end,
-      { desc = '[S]earch by [G]rep' })
+    vim.keymap.set('n', '<leader>sg', function()
+      builtin.live_grep { hidden = true }
+    end, { desc = '[S]earch by [G]rep' })
     vim.keymap.set('n', '<leader>sd', builtin.diagnostics, { desc = '[S]earch [D]iagnostics' })
     vim.keymap.set('n', '<leader>sr', builtin.resume, { desc = '[S]earch [R]esume' })
 
     vim.api.nvim_create_user_command('Rg', function(opts)
-        builtin.grep_string({ search = opts.fargs[1] })
-      end,
-      { nargs = 1 }
-    )
-  end
+      builtin.grep_string { search = opts.fargs[1] }
+    end, { nargs = 1 })
+  end,
 }
