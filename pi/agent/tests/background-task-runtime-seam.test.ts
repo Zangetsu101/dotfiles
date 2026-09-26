@@ -41,6 +41,16 @@ test("resuming in a new root pane updates direct children's parent navigation", 
   assert.equal((await tasks.resolve(child.id, { familyId: family.familyId }))?.parentTarget, "%resumed")
 })
 
+test("a child returns to the root's current pane after resume", async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+  const child = await tasks.create({ ...family, kind: "agent", label: "research", parentId: "root-one", parentTarget: "%root" })
+  await tasks.reconcileFamily({ familyId: family.familyId, familyName: family.familyName, rootId: family.rootId, rootPane: "%resumed" })
+
+  await tasks.navigateReturn(child)
+
+  assert.equal(tmux.attachedTarget, "%resumed")
+})
+
 test("a vanished family session is recreated for new work in the same process", async () => {
   const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
   await tasks.create({ ...family, kind: "agent", label: "first", parentId: "root-one" })

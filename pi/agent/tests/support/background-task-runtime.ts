@@ -79,6 +79,7 @@ export class FakeTmuxProcessAdapter implements TmuxProcessAdapter {
       if (key === "remain-on-exit" && "retained" in record) record.retained = value === "on"; else record.metadata.set(key, value)
       return ""
     }
+    if (action === "show-options") return this.session(option(args, "-t"))?.metadata.get(args.at(-1)!) ?? ""
     if (action === "list-sessions") {
       const format = option(args, "-F") ?? "#{session_name}"
       return [...this.sessions.values()].map((session) => this.format(format, { session_id: session.id, session_name: session.name }, session.metadata)).join("\n")

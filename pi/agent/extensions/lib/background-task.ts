@@ -390,7 +390,11 @@ export class BackgroundTasks {
   }
 
   async navigateReturn(task: BackgroundTask): Promise<"switched" | string | undefined> {
-    return task.rootPane ? this.attach({ target: task.rootPane }) : undefined
+    const session = task.familyId ? await this.familySession(task.familyId) : ""
+    const rootPane = session
+      ? await this.tmux.run(["show-options", "-v", "-t", session, "@pi_task_root_pane"]).catch(() => "")
+      : task.rootPane
+    return rootPane ? this.attach({ target: rootPane }) : undefined
   }
 
   async setStatus(task: BackgroundTask, status: TaskStatus): Promise<void> {
