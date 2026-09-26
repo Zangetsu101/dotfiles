@@ -18,6 +18,19 @@ export type TaskFamily = {
   isRoot: boolean
 }
 
+export function familyTaskParent(family: TaskFamily, parentTarget: string) {
+  return {
+    familyId: family.familyId,
+    familyName: family.familyName,
+    rootId: family.rootId,
+    rootPane: family.rootPane,
+    parent: family.nodeId,
+    parentId: family.nodeId,
+    parentLabel: family.nodeLabel,
+    parentTarget,
+  }
+}
+
 type PersistedFamily = Pick<TaskFamily, "familyId" | "rootId">
 type FamilyEntry = { type?: string; customType?: string; data?: unknown }
 type FamilyContext = {

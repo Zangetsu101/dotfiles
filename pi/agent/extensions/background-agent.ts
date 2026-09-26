@@ -19,7 +19,7 @@ import {
   type TaskStatus,
   type TmuxProcessAdapter,
 } from "./lib/background-task.ts"
-import { familyForContext, type TaskFamily } from "./lib/background-family.ts"
+import { familyForContext, familyTaskParent, type TaskFamily } from "./lib/background-family.ts"
 
 const execFileAsync = promisify(execFile)
 const STATUS_FILE_ENV = "PI_BACKGROUND_AGENT_STATUS_FILE"
@@ -376,9 +376,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       piArgs.push("--thinking", thinking, params.task)
 
       const task = await tasks.create({
-        kind: "agent", label, cwd: params.cwd ?? ctx.cwd, parent: family!.nodeId,
-        familyId: family!.familyId, familyName: family!.familyName, rootId: family!.rootId, rootPane: family!.rootPane,
-        parentId: family!.nodeId, parentLabel: family!.nodeLabel, parentTarget,
+        kind: "agent", label, cwd: params.cwd ?? ctx.cwd, ...familyTaskParent(family!, parentTarget),
         command: invocation.command, args: piArgs, interactiveAfterExit: true,
         statusFileEnv: STATUS_FILE_ENV,
         env: { [AGENT_LABEL_ENV]: label, [DEPTH_ENV]: String(depth + 1), [MAX_DEPTH_ENV]: String(maxDepth), PI_BACKGROUND_AGENT_PARENT: parentTarget },

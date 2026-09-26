@@ -3,7 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox"
 import { BACKGROUND_ACTIVITY_FINISHED, BACKGROUND_ACTIVITY_STARTED, type BackgroundActivity } from "./lib/background-activity.ts"
 import { BACKGROUND_TASK_CREATED, BACKGROUND_TASK_STATUS_CHANGED, BackgroundTasks, safeTaskLabel, type BackgroundTask } from "./lib/background-task.ts"
-import { FAMILY_ENTRY, familyForContext, type TaskFamily } from "./lib/background-family.ts"
+import { FAMILY_ENTRY, familyForContext, familyTaskParent, type TaskFamily } from "./lib/background-family.ts"
 
 const MAX_OUTPUT_CHARS = 50_000
 const POLL_MS = 100
@@ -201,7 +201,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       const label = params.label?.trim() || params.command
       let task: BackgroundTask
       if (!family) await restoreFamily("startup", ctx)
-      try { task = await tasks.create({ kind: "monitor", label, cwd: ctx.cwd, parent: family!.nodeId, parentId: family!.nodeId, parentLabel: family!.nodeLabel, parentTarget: process.env.TMUX_PANE ?? family!.rootPane, familyId: family!.familyId, familyName: family!.familyName, rootId: family!.rootId, rootPane: family!.rootPane, command: "/bin/bash", args: ["-lc", params.command], remainOnExit: true }) }
+      try { task = await tasks.create({ kind: "monitor", label, cwd: ctx.cwd, ...familyTaskParent(family!, process.env.TMUX_PANE ?? family!.rootPane), command: "/bin/bash", args: ["-lc", params.command], remainOnExit: true }) }
       catch (error) { throw new Error(`background_monitor failed to start tmux task: ${error instanceof Error ? error.message : String(error)}`) }
       taskCache.push(task)
       pi.events.emit(BACKGROUND_TASK_CREATED, task)

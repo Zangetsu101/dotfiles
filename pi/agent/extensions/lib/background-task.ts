@@ -367,7 +367,7 @@ export class BackgroundTasks {
     const all = discovered.length ? discovered : [...this.known.values()]
     if (!query) return all
     if ("familyId" in query) return all.filter((task) => task.familyId === query.familyId)
-    return all.filter((task) => this.inSubtree(task, query.subtreeRootId, all))
+    return this.subtree({ id: query.subtreeRootId }, all)
   }
   private inSubtree(task: BackgroundTask, root: string, all: BackgroundTask[]): boolean {
     let current: BackgroundTask | undefined = task
@@ -381,8 +381,8 @@ export class BackgroundTasks {
     return false
   }
 
-  subtree(task: BackgroundTask, all: BackgroundTask[]): BackgroundTask[] {
-    return all.filter((candidate) => candidate.id === task.id || this.inSubtree(candidate, task.id, all))
+  subtree(task: Pick<BackgroundTask, "id">, all: BackgroundTask[]): BackgroundTask[] {
+    return all.filter((candidate) => this.inSubtree(candidate, task.id, all))
   }
 
   async navigateParent(task: BackgroundTask): Promise<"switched" | string | undefined> {
