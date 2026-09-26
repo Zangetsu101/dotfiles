@@ -5,8 +5,8 @@ import { familyForContext, type TaskFamily } from "./lib/background-family.ts"
 const REFRESH_MS = 1_000
 const STATUS_KEY = "background-tasks"
 
-export function formatRunningTasks(tasks: BackgroundTask[]): string | undefined {
-  const running = tasks.filter((task) => task.status === "running")
+export function formatRunningTasks(tasks: BackgroundTask[], nodeId?: string): string | undefined {
+  const running = tasks.filter((task) => task.status === "running" && task.id !== nodeId)
   if (!running.length) return undefined
   const agents = running.filter((task) => task.kind === "agent").length
   const monitors = running.filter((task) => task.kind === "monitor").length
@@ -31,7 +31,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (event, ctx) => {
     await restore(event.reason, ctx)
     if (!ctx.hasUI) return
-    update = async () => ctx.ui.setStatus(STATUS_KEY, formatRunningTasks(await tasks.list({ subtreeRootId: family!.nodeId })))
+    update = async () => ctx.ui.setStatus(STATUS_KEY, formatRunningTasks(await tasks.list({ subtreeRootId: family!.nodeId }, true), family!.nodeId))
     await update()
     timer = setInterval(() => void update?.(), REFRESH_MS)
   })

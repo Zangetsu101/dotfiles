@@ -324,7 +324,7 @@ export class BackgroundTasks {
     ])
     this.known.set(task.id, task)
   }
-  async list(query?: TaskQuery): Promise<BackgroundTask[]> {
+  async list(query?: TaskQuery, liveOnly = false): Promise<BackgroundTask[]> {
     const format = (target: string) => `${target}\t${keys.map((key) => `#{@pi_task_${key}}`).join("\t")}`
     const [windows, panes] = await Promise.all([this.tmux.run(["list-windows", "-a", "-F", format("#{window_id}")]).catch(() => ""), this.tmux.run(["list-panes", "-a", "-F", format("#{pane_id}")]).catch(() => "")])
     const parse = (line: string): BackgroundTask | undefined => {
@@ -352,7 +352,8 @@ export class BackgroundTasks {
         storageMode: "family",
       }
     }
-    const discovered = [...windows.split("\n"), ...panes.split("\n")].filter(Boolean).map(parse).filter((task): task is BackgroundTask => Boolean(task))
+    const discovered = [...windows.split("\n"), ...panes.split("\n")].filter(Boolean).map(parse)
+      .filter((task): task is BackgroundTask => task !== undefined && (task.kind !== "agent" || task.target.startsWith("@")))
     for (const task of discovered) this.known.set(task.id, task)
     const poolCounts = new Map<string, Map<string, number>>()
     for (const task of discovered) {
@@ -364,7 +365,7 @@ export class BackgroundTasks {
     for (const [familyId, familyPools] of poolCounts) {
       this.pools.set(familyId, [...familyPools].map(([window, count]) => ({ window, count })))
     }
-    const all = discovered.length ? discovered : [...this.known.values()]
+    const all = liveOnly ? discovered : discovered.length ? discovered : [...this.known.values()]
     if (!query) return all
     if ("familyId" in query) return all.filter((task) => task.familyId === query.familyId)
     return this.subtree({ id: query.subtreeRootId }, all)

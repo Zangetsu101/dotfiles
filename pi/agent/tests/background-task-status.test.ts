@@ -7,6 +7,13 @@ function task(kind: BackgroundTask["kind"], status: BackgroundTask["status"]): B
   return { id: `${kind}-${status}`, kind, label: kind, status, target: kind, parent: "", cwd: "/repo", statusFile: "/tmp/status" }
 }
 
+test("a spawned agent does not count itself, but counts its descendants", () => {
+  const self = { ...task("agent", "running"), id: "self", parentId: "root" }
+  const child = { ...task("monitor", "running"), id: "child", parentId: "self" }
+  assert.equal(formatRunningTasks([self], "self"), undefined)
+  assert.equal(formatRunningTasks([self, child], "self"), "tasks: 1 monitor")
+})
+
 test("status line summarizes only running agents and monitors", () => {
   assert.equal(formatRunningTasks([
     task("agent", "running"),

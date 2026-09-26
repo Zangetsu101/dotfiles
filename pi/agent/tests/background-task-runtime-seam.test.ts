@@ -32,6 +32,24 @@ test("nested and current-node work shares one family session while discovery sta
   assert.match(nested.displayName!, /← research$/)
 })
 
+test("task list does not count an agent's inherited pane metadata twice", async () => withTmuxEnvironment(async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const originalRun = tmux.run.bind(tmux)
+  tmux.run = async (args) => {
+    const result = await originalRun(args)
+    if (args[0] !== "list-panes") return result
+    const format = args[args.indexOf("-F") + 1]!
+    const windows = await originalRun(["list-windows", "-a", "-F", format.replace("#{pane_id}", "#{window_id}")])
+    const inherited = windows.split("\n").filter((line) => line.includes("\tagent\t")).map((line) => line.replace(/^@\d+/, "%inherited"))
+    return [result, ...inherited].filter(Boolean).join("\n")
+  }
+  const tasks = new BackgroundTasks(tmux); const runtime = new FakePiRuntime({ sessionId: "one" })
+  backgroundMonitorExtension(runtime.pi, { tasks }); await backgroundAgentExtension(runtime.pi, { tasks, tmux }); await runtime.emit("session_start", { reason: "startup" })
+  const agent = await runtime.execute("background_agent", { task: "review", label: "review", expectedCompletionMinutes: 1 })
+  await runtime.commands.get("task").handler("list", runtime.context)
+  assert.equal((runtime.notifications.at(-1)?.match(new RegExp(agent.details.id, "g")) ?? []).length, 1)
+  await runtime.emit("session_shutdown", { reason: "reload" })
+}))
+
 test("resuming in a new root pane updates direct children's parent navigation", async () => {
   const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
   const child = await tasks.create({ ...family, kind: "agent", label: "research", parentId: "root-one", parentTarget: "%root" })
