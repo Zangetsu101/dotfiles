@@ -1,6 +1,6 @@
-# Local Issue Tracking
+# Dotfiles Domain
 
-This context describes the repository-local Markdown issues used to coordinate planning, triage, and agent work.
+This context defines project-specific language for local issue coordination and Pi background work.
 
 ## Language
 
@@ -27,3 +27,17 @@ _Avoid_: Claimant, assignee
 **Effort**:
 A directory under `.scratch/` containing a specification or map and its related issues.
 _Avoid_: Feature (when the work may be research, planning, or maintenance)
+
+## Background Work
+
+**Root Pi**:
+The user-started Pi process from which a task family descends. It remains in the user’s existing workspace and is represented as the family’s virtual root.
+_Avoid_: Root agent, parent session
+
+**Task family**:
+A Root Pi and all background agents and monitors descended from it. Its background tasks share one dedicated tmux session, including tasks created by nested agents.
+_Avoid_: Owner group, pane group
+
+**Task subtree**:
+A Pi node and every background task descended from it. Task discovery and ordinary task operations are confined to the caller’s subtree.
+_Avoid_: Owner tasks, pane tasks

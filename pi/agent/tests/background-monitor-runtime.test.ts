@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
 import test from "node:test"
-import backgroundMonitorExtension, { taskArgumentCompletions } from "../extensions/background-monitor.ts"
+import backgroundMonitorExtension, { formatTaskTree, taskArgumentCompletions } from "../extensions/background-monitor.ts"
 import { BACKGROUND_ACTIVITY_FINISHED, BACKGROUND_ACTIVITY_STARTED } from "../extensions/lib/background-activity.ts"
 import type { BackgroundTask, TaskCompletion } from "../extensions/lib/background-task.ts"
 
@@ -14,29 +14,56 @@ class SharedTasks {
   terminations: Array<{ id: string; reason: string }> = []
   claimBarrier?: Promise<void>
   async available() { return true }
-  async list(owner?: string) { return this.tasks.filter((task) => owner === undefined || task.owner === owner) }
-  async isPresent(task: Pick<BackgroundTask, "id">) { return this.tasks.some((candidate) => candidate.id === task.id) }
-  async claimCompletionOrReconcile(task: BackgroundTask) {
+  async list(query?: { subtreeRootId: string }) {
+    if (!query) return this.tasks
+    const descendants = new Set([query.subtreeRootId])
+    for (let changed = true; changed;) {
+      changed = false
+      for (const task of this.tasks) {
+        if (task.parentId && descendants.has(task.parentId) && !descendants.has(task.id)) {
+          descendants.add(task.id)
+          changed = true
+        }
+      }
+    }
+    return this.tasks.filter((task) => descendants.has(task.id))
+  }
+  subtree(root: BackgroundTask, tasks: BackgroundTask[]) {
+    const descendants = new Set([root.id])
+    for (let changed = true; changed;) {
+      changed = false
+      for (const task of tasks) {
+        if (task.parentId && descendants.has(task.parentId) && !descendants.has(task.id)) {
+          descendants.add(task.id)
+          changed = true
+        }
+      }
+    }
+    return tasks.filter((task) => descendants.has(task.id))
+  }
+  async claimCompletion(task: BackgroundTask) {
     await this.claimBarrier
     const completion = this.completions.get(task.id)
     if (!completion || this.claimed.has(task.id)) return undefined
     this.claimed.add(task.id)
     return completion
   }
+  async claimCompletionOrReconcile(task: BackgroundTask) { return this.claimCompletion(task) }
   async setStatus(task: BackgroundTask, status: BackgroundTask["status"]) { task.status = status }
   async terminate(task: BackgroundTask, reason = "terminated by user") {
-    if (task.status !== "running") return
+    if (task.status !== "running") return []
     this.terminations.push({ id: task.id, reason })
     this.completions.set(task.id, { status: "cancelled", reason })
-    task.status = "cancelled"
+    task.status = "terminated"
+    return [task]
   }
 }
 
 function runningTask(id = "one"): BackgroundTask {
-  return { id, kind: "monitor", label: `task ${id}`, status: "running", target: `target-${id}`, owner: "%test", parent: "", cwd: "/repo", statusFile: `/tmp/${id}` }
+  return { id, kind: "monitor", label: `task ${id}`, status: "running", target: `target-${id}`, parent: "%test", parentId: "%test", cwd: "/repo", statusFile: `/tmp/${id}` }
 }
 
-function runtime(shared: SharedTasks, confirmations: boolean[] = []) {
+function runtime(shared: SharedTasks, confirmations: boolean[] = [], subtreeRootId: string | null = "%test") {
   const handlers = new Map<string, Handler[]>()
   const messages: any[] = []
   const notifications: string[] = []
@@ -54,12 +81,13 @@ function runtime(shared: SharedTasks, confirmations: boolean[] = []) {
   } as any
   const ctx = {
     cwd: "/repo", hasUI: true,
+    sessionManager: { getSessionId: () => "monitor-runtime", getBranch: () => [] },
     ui: {
       notify(message: string) { notifications.push(message) },
       async confirm(_title: string, message: string) { prompts.push(message); return confirmations.shift() ?? false },
     },
   }
-  backgroundMonitorExtension(pi, { tasks: shared as any, pollMs: 5, owner: "%test" })
+  backgroundMonitorExtension(pi, { tasks: shared as any, pollMs: 5, ...(subtreeRootId === null ? {} : { subtreeRootId }) })
   return {
     messages, notifications, prompts, activity, commands,
     async emit(name: string, event: any = {}) {
@@ -78,8 +106,19 @@ async function eventually(predicate: () => boolean) {
   assert.fail("condition was not reached")
 }
 
+test("task list formatting renders only the caller subtree as a tree", () => {
+  const research = { ...runningTask("research"), label: "research", displayName: "research", parentId: "root" }
+  const verify = { ...runningTask("verify"), label: "verify", displayName: "verify ← research", parentId: "research" }
+  const sibling = { ...runningTask("sibling"), parentId: "other-root" }
+
+  assert.equal(formatTaskTree([research, verify, sibling], "root"), [
+    "research  monitor  running  research",
+    "  verify ← research  monitor  running  verify",
+  ].join("\n"))
+})
+
 test("task completion offers actions before a search term is typed", () => {
-  assert.deepEqual(taskArgumentCompletions([], " ")?.map((item) => item.value), ["list", "attach", "return", "terminate", "clean"])
+  assert.deepEqual(taskArgumentCompletions([], " ")?.map((item) => item.value), ["list", "attach", "parent", "return", "terminate", "clean"])
 })
 
 test("task list replaces the tasks command", async () => {
@@ -89,15 +128,15 @@ test("task list replaces the tasks command", async () => {
 
   assert.equal(current.commands.has("tasks"), false)
   await current.commands.get("task").handler("list", { ui: { notify: (message: string) => current.notifications.push(message) } })
-  assert.match(current.notifications[0]!, /Background tasks:\none  monitor  running  task one/)
+  assert.match(current.notifications[0]!, /Background tasks:\ntask one  monitor  running  one/)
 })
 
 test("task completion searches task kind, status, label, id, and target", () => {
-  const agent = { ...runningTask("agent-one"), kind: "agent" as const, label: "code review", status: "completed" as const }
+  const agent = { ...runningTask("agent-one"), kind: "agent" as const, label: "code review", status: "succeeded" as const }
   const monitor = { ...runningTask("monitor-one"), label: "build release", target: "release-target" }
 
   assert.deepEqual(taskArgumentCompletions([agent, monitor], "attach agent")?.map((item) => item.value), ["attach agent-one"])
-  assert.deepEqual(taskArgumentCompletions([agent, monitor], "attach completed")?.map((item) => item.value), ["attach agent-one"])
+  assert.deepEqual(taskArgumentCompletions([agent, monitor], "attach succeeded")?.map((item) => item.value), ["attach agent-one"])
   assert.deepEqual(taskArgumentCompletions([agent, monitor], "attach release-target")?.map((item) => item.value), ["attach monitor-one"])
 })
 
@@ -121,39 +160,23 @@ test("reload hands a running monitor to the replacement runtime and reports its 
   assert.deepEqual(replacement.activity.finished, ["background-monitor:one"])
 })
 
-test("declining session replacement leaves the monitor and runtime untouched", async () => {
-  const shared = new SharedTasks()
-  shared.tasks.push(runningTask())
-  const current = runtime(shared, [false])
-  await current.emit("session_start", { reason: "startup" })
-
-  assert.deepEqual(await current.emit("session_before_switch", { reason: "resume" }), { cancel: true })
-  assert.match(current.prompts[0]!, /1 monitored task/)
-  assert.match(current.prompts[0]!, /terminated/)
-  assert.equal(shared.tasks[0]?.status, "running")
-  assert.equal(shared.terminations.length, 0)
-  await current.emit("session_shutdown", { reason: "reload" })
-})
-
-test("confirming switch and fork replacement cancels owned monitors but not agents", async () => {
-  for (const beforeEvent of ["session_before_switch", "session_before_fork"]) {
+test("session replacement keeps running family work without prompting", async () => {
+  for (const reason of ["new", "resume", "fork"]) {
     const shared = new SharedTasks()
-    shared.tasks.push(runningTask(), { ...runningTask("agent"), kind: "agent" })
-    const current = runtime(shared, [true])
+    shared.tasks.push(runningTask())
+    const current = runtime(shared)
     await current.emit("session_start", { reason: "startup" })
+    await current.emit("session_shutdown", { reason })
 
-    assert.equal(await current.emit(beforeEvent, {}), undefined)
-    await current.emit("session_shutdown", { reason: beforeEvent === "session_before_switch" ? "new" : "fork" })
-
-    assert.deepEqual(shared.terminations.map((item) => item.id), ["one"])
-    assert.match(shared.terminations[0]!.reason, /Pi session shutdown/)
-    assert.equal(shared.tasks[1]?.status, "running")
+    assert.deepEqual(current.prompts, [])
+    assert.equal(shared.tasks[0]?.status, "running")
+    assert.equal(shared.terminations.length, 0)
   }
 })
 
 test("replacement and tree navigation do not warn when no owned monitor is running", async () => {
   const shared = new SharedTasks()
-  shared.tasks.push({ ...runningTask("done"), status: "completed" })
+  shared.tasks.push({ ...runningTask("done"), status: "succeeded" })
   const current = runtime(shared)
   await current.emit("session_before_switch", { reason: "new" })
   await current.emit("session_before_fork", {})
@@ -175,25 +198,49 @@ test("shutdown waits for a racing completion instead of overwriting it with canc
   await shutdown
 
   assert.equal(shared.terminations.length, 0)
-  assert.equal(shared.tasks[0]?.status, "completed")
+  assert.equal(shared.tasks[0]?.status, "succeeded")
   assert.equal(current.messages.length, 1)
   assert.match(current.messages[0].content, /finished with exit code 0/)
 })
 
-test("unavoidable shutdown durably cancels only running monitors and is idempotent", async () => {
+test("Root Pi quit can terminate an active nested descendant", async () => {
   const shared = new SharedTasks()
-  shared.tasks.push(runningTask(), { ...runningTask("done"), status: "completed" }, { ...runningTask("agent"), kind: "agent" })
-  const current = runtime(shared)
+  shared.tasks.push(
+    { ...runningTask("parent"), familyId: "family:monitor-runtime", parentId: "root:monitor-runtime", status: "succeeded" },
+    { ...runningTask("nested"), familyId: "family:monitor-runtime", parentId: "parent" },
+  )
+  const current = runtime(shared, [true], null)
   await current.emit("session_start", { reason: "startup" })
-
-  await current.emit("session_shutdown", { reason: "quit" })
   await current.emit("session_shutdown", { reason: "quit" })
 
-  assert.deepEqual(shared.terminations.map((item) => item.id), ["one"])
-  assert.equal(shared.completions.get("one")?.status, "cancelled")
-  assert.match(shared.completions.get("one")?.reason ?? "", /quit/)
-  assert.equal(shared.tasks[1]?.status, "completed")
-  assert.equal(shared.tasks[2]?.status, "running")
-  assert.equal(current.messages.length, 0)
-  assert.deepEqual(current.activity.finished, ["background-monitor:one"])
+  assert.match(current.prompts[0]!, /Terminate 1 running task/)
+  assert.deepEqual(shared.terminations, [{ id: "nested", reason: "Root Pi quit" }])
+})
+
+test("Root Pi quit terminates a running subtree only through its highest running node", async () => {
+  const shared = new SharedTasks()
+  shared.tasks.push(
+    { ...runningTask("parent"), familyId: "family:monitor-runtime", parentId: "root:monitor-runtime" },
+    { ...runningTask("settled"), familyId: "family:monitor-runtime", parentId: "parent", status: "succeeded" },
+    { ...runningTask("nested"), familyId: "family:monitor-runtime", parentId: "settled" },
+  )
+  const current = runtime(shared, [true], null)
+  await current.emit("session_start", { reason: "startup" })
+  await current.emit("session_shutdown", { reason: "quit" })
+
+  assert.deepEqual(shared.terminations, [{ id: "parent", reason: "Root Pi quit" }])
+})
+
+test("Root Pi quit defaults to keeping work and can terminate running monitors", async () => {
+  for (const terminate of [false, true]) {
+    const shared = new SharedTasks()
+    shared.tasks.push(runningTask(), { ...runningTask("done"), status: "succeeded" }, { ...runningTask("agent"), kind: "agent" })
+    const current = runtime(shared, [terminate])
+    await current.emit("session_start", { reason: "startup" })
+    await current.emit("session_shutdown", { reason: "quit" })
+
+    assert.match(current.prompts[0]!, /Terminate 2 running task/)
+    assert.deepEqual(shared.terminations.map((item) => item.id), terminate ? ["one", "agent"] : [])
+    assert.equal(shared.tasks[2]?.status, terminate ? "terminated" : "running")
+  }
 })

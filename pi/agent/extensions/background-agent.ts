@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process"
 import { basename, dirname } from "node:path"
-import { access, open } from "node:fs/promises"
+import { access, open, rm } from "node:fs/promises"
 import { promisify } from "node:util"
 import { watch, type FSWatcher } from "node:fs"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
@@ -16,14 +16,17 @@ import {
   BackgroundTasks,
   systemTmux,
   writeTaskCompletion,
+  type TaskStatus,
   type TmuxProcessAdapter,
 } from "./lib/background-task.ts"
+import { familyForContext, familyTaskParent, type TaskFamily } from "./lib/background-family.ts"
 
 const execFileAsync = promisify(execFile)
 const STATUS_FILE_ENV = "PI_BACKGROUND_AGENT_STATUS_FILE"
 const DEPTH_ENV = "PI_BACKGROUND_AGENT_DEPTH"
+const MAX_DEPTH_ENV = "PI_BACKGROUND_AGENT_MAX_DEPTH"
 const AGENT_LABEL_ENV = "PI_BACKGROUND_AGENT_LABEL"
-const MAX_AGENT_DEPTH = 2
+const DEFAULT_MAX_AGENT_DEPTH = 2
 const MAX_RESULT_CHARS = 50_000
 const POLL_MS = 100
 
@@ -31,12 +34,16 @@ type AgentSession = {
   id: string
   target: string
   label: string
-  status: string
+  status: TaskStatus
   model: string
   thinking: string
   expectedCompletionAt: number
   parent: string
-  owner: string
+  parentId?: string
+  parentTarget?: string
+  familyId?: string
+  rootId?: string
+  rootPane?: string
   statusFile: string
   kind: "agent"
   cwd: string
@@ -142,14 +149,14 @@ async function claimOverrun(statusFile: string): Promise<boolean> {
   }
 }
 
-async function listAgents(tasks: BackgroundTasks, tmux: TmuxProcessAdapter, owner?: string): Promise<AgentSession[]> {
-  const generic = (await tasks.list(owner)).filter((task) => task.storageMode !== "legacy" && task.kind === "agent")
+async function listAgents(tasks: BackgroundTasks, tmux: TmuxProcessAdapter, subtreeRootId: string): Promise<AgentSession[]> {
+  const generic = (await tasks.list({ subtreeRootId })).filter((task) => task.kind === "agent")
   let output = ""
   try { output = await tmux.run(["list-windows", "-a", "-F", "#{session_name}:#{window_name}\t#{@pi_agent_status}\t#{@pi_agent_model}\t#{@pi_agent_thinking}\t#{@pi_agent_expected_completion_at}"]) } catch {}
   const details = new Map(output.split("\n").filter(Boolean).map((line) => { const [target, status, model, thinking, expectedCompletionAt] = line.split("\t"); return [target, { status, model, thinking, expectedCompletionAt }] }))
   return generic.map((task) => {
     const detail = details.get(task.target)
-    return { ...task, kind: "agent" as const, status: detail?.status || task.status, model: detail?.model || "", thinking: detail?.thinking || "", expectedCompletionAt: Number(detail?.expectedCompletionAt) || 0 }
+    return { ...task, kind: "agent" as const, status: task.status, model: detail?.model || "", thinking: detail?.thinking || "", expectedCompletionAt: Number(detail?.expectedCompletionAt) || 0 }
   })
 }
 
@@ -165,6 +172,19 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
   pi.events.on(BACKGROUND_ACTIVITY_FINISHED, (data) => {
     const activity = data as BackgroundActivity
     if (activity?.id) activeBackgroundActivities.delete(activity.id)
+  })
+
+  pi.on("agent_start", async () => {
+    if (!reported) return
+    reported = false
+    await Promise.all([
+      rm(statusFile, { force: true }),
+      rm(`${statusFile}.notified`, { force: true }),
+      rm(overrunFile(statusFile), { force: true }),
+      rm(`${overrunFile(statusFile)}.notified`, { force: true }),
+      tmux.run(["set-option", "-w", "@pi_agent_status", "running"]).catch(() => undefined),
+      tmux.run(["set-option", "-w", "@pi_task_status", "running"]).catch(() => undefined),
+    ])
   })
 
   pi.on("agent_settled", async (_event, ctx) => {
@@ -195,29 +215,37 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   const childStatusFile = process.env[STATUS_FILE_ENV]
   const parsedDepth = Number.parseInt(process.env[DEPTH_ENV] ?? "", 10)
   const depth = childStatusFile ? (Number.isFinite(parsedDepth) ? parsedDepth : 1) : 0
+  const configuredMaxDepth = Number.parseInt(process.env[MAX_DEPTH_ENV] ?? "", 10)
+  const maxDepth = Number.isFinite(configuredMaxDepth) ? configuredMaxDepth : DEFAULT_MAX_AGENT_DEPTH
   if (childStatusFile) await registerChildBridge(pi, childStatusFile, tmux)
-  if (depth >= MAX_AGENT_DEPTH) return
+  if (depth >= maxDepth) return
 
   const watchers = new Map<string, FSWatcher>()
   const reconciliationTimers = new Map<string, NodeJS.Timeout>()
-  let agentsCache = await listAgents(tasks, tmux, currentTmuxPane())
+  let agentsCache: AgentSession[] = []
+  let family: TaskFamily | undefined
   let shuttingDown = false
+
+  const restoreFamily = async (reason: string, ctx: ExtensionContext) => {
+    family = familyForContext(reason, ctx, pi.getSessionName?.())
+    agentsCache = (await listAgents(tasks, tmux, family.nodeId)).filter((agent) => agent.parentId === family!.nodeId)
+  }
 
   const monitor = (agent: AgentSession) => {
     if (watchers.has(agent.id)) return
 
     const activity: BackgroundActivity = { id: `background-agent:${agent.id}`, source: "background_agent", label: agent.label }
-    pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
-    let completed = false
+    if (agent.status === "running") pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
+    let settled = agent.status !== "running"
     let consuming = false
     let consumingOverrun = false
     const consumeOverrun = async () => {
-      if (completed || consumingOverrun || shuttingDown) return
+      if (settled || consumingOverrun || shuttingDown) return
       consumingOverrun = true
       try {
         if (!(await claimOverrun(agent.statusFile))) return
         if (await tasks.completion(agent)) return
-        const current = (await listAgents(tasks, tmux, agent.owner)).find((candidate) => candidate.id === agent.id)
+        const current = (await listAgents(tasks, tmux, agent.parentId ?? agent.id)).find((candidate) => candidate.id === agent.id)
         if (!current || current.status !== "running") return
         pi.sendMessage(
           {
@@ -232,42 +260,34 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       }
     }
     const consume = async () => {
-      if (completed || consuming || shuttingDown) return
+      if (consuming || shuttingDown) return
       consuming = true
 
       const completion = await tasks.claimCompletionOrReconcile(agent)
       if (!completion) {
+        if (settled && !(await tasks.completion(agent))) {
+          settled = false
+          agent.status = "running"
+          await tasks.setStatus(agent, "running")
+          pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
+        }
         consuming = false
         return
       }
 
-      completed = true
-      watchers.get(agent.id)?.close()
-      watchers.delete(agent.id)
-      clearInterval(reconciliationTimers.get(agent.id))
-      reconciliationTimers.delete(agent.id)
+      settled = true
       pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
-      let failed: boolean
-      let cancelled = false
-      let status: string
-      let output: string
-      if ("kind" in completion) {
-        failed = completion.kind === "exit" || completion.stopReason === "error"
-        status = failed
-          ? completion.kind === "exit" ? `failed with exit code ${completion.exitCode ?? "unknown"}` : "failed with a model error"
+      const agentCompletion = "kind" in completion
+      const failed = agentCompletion ? completion.kind === "exit" || completion.stopReason === "error" : completion.status === "failed"
+      const terminated = !agentCompletion && completion.status === "cancelled"
+      const status = terminated
+        ? `was terminated${completion.reason ? `: ${completion.reason}` : ""}`
+        : failed
+          ? agentCompletion && completion.kind !== "exit" ? "failed with a model error" : `failed with exit code ${completion.exitCode ?? "unknown"}`
           : "finished its initial task"
-        output = completion.output?.trim() || "(no final output)"
-      } else {
-        failed = completion.status === "failed"
-        cancelled = completion.status === "cancelled"
-        status = cancelled
-          ? `was cancelled${completion.reason ? `: ${completion.reason}` : ""}`
-          : failed ? `failed with exit code ${completion.exitCode ?? "unknown"}` : "finished its initial task"
-        output = "(no final output)"
-      }
-      const taskStatus = cancelled ? "cancelled" : failed ? "failed" : "completed"
+      const taskStatus: TaskStatus = terminated ? "terminated" : failed ? "failed" : "succeeded"
       await Promise.all([
-        tmux.run(["set-option", "-w", "-t", agent.target, "@pi_agent_status", cancelled ? "cancelled" : failed ? "failed" : "settled"]),
+        tmux.run(["set-option", "-w", "-t", agent.target, "@pi_agent_status", terminated ? "terminated" : failed ? "failed" : "settled"]),
         tmux.run(["set-option", "-w", "-t", agent.target, "@pi_task_status", taskStatus]),
       ]).catch(() => undefined)
 
@@ -279,14 +299,17 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       const attach = process.env.TMUX
         ? `/task attach ${agent.id}`
         : `tmux attach -t ${agent.target}`
+      const output = "output" in completion ? completion.output?.trim() || "(no final output)" : "(no final output)"
+
       pi.sendMessage(
         {
           customType: "background-agent",
-          content: `${summary}\nAttach with: ${attach}\n\nFinal output:\n${output}\n\nReview the result. When all background work has returned, provide the complete standalone result in your final turn, including any conclusions that remain unchanged.`,
+          content: `${summary}\nAttach with: ${attach}\n\nFinal output:\n${output}\n\nReview the result and report it to the user.`,
           display: true,
         },
         { deliverAs: "followUp", triggerTurn: true },
       )
+      consuming = false
     }
 
     const watcher = watch(dirname(agent.statusFile), (_event, filename) => {
@@ -300,18 +323,23 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       if (changed === basename(overrunFile(agent.statusFile))) void consumeOverrun()
     })
     watchers.set(agent.id, watcher)
-    const reconcile = async () => {
-      if (completed || shuttingDown) return
-      await consume()
-    }
-    reconciliationTimers.set(agent.id, setInterval(() => void reconcile(), pollMs))
-    void reconcile()
+    reconciliationTimers.set(agent.id, setInterval(() => void consume(), pollMs))
+    void consume()
     void consumeOverrun()
   }
 
-  for (const agent of agentsCache) {
-    if (agent.status === "running" && agent.statusFile) monitor(agent)
-  }
+  pi.on("session_start", async (event, ctx) => {
+    await restoreFamily(event.reason, ctx)
+    for (const agent of agentsCache) if (agent.statusFile) monitor(agent)
+  })
+  pi.on("session_tree", async (_event, ctx) => {
+    for (const watcher of watchers.values()) watcher.close()
+    watchers.clear()
+    for (const timer of reconciliationTimers.values()) clearInterval(timer)
+    reconciliationTimers.clear()
+    await restoreFamily("tree", ctx)
+    for (const agent of agentsCache) if (agent.statusFile) monitor(agent)
+  })
 
   pi.registerTool({
     name: "background_agent",
@@ -336,22 +364,22 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       if (!(await tasks.available())) throw new Error("background_agent requires tmux on PATH")
 
       const label = params.label?.trim() || params.task.split("\n", 1)[0].slice(0, 60) || "task"
-      const parent = (await currentTmuxSession(tmux)) ?? ""
-      const owner = currentTmuxPane()
+      if (!family) await restoreFamily("startup", ctx)
+      const parentTarget = currentTmuxPane() || (await currentTmuxSession(tmux)) || family!.rootPane
       const invocation = piInvocation()
       const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "default"
       const thinking = pi.getThinkingLevel()
       const expectedCompletionAt = Date.now() + params.expectedCompletionMinutes * millisecondsPerMinute
-      const piArgs = [...invocation.args, "--name", `agent: ${label}`]
+      const piArgs = [...invocation.args, "--name", label]
 
       if (ctx.model) piArgs.push("--model", model)
       piArgs.push("--thinking", thinking, params.task)
 
       const task = await tasks.create({
-        kind: "agent", label, cwd: params.cwd ?? ctx.cwd, parent, owner,
+        kind: "agent", label, cwd: params.cwd ?? ctx.cwd, ...familyTaskParent(family!, parentTarget),
         command: invocation.command, args: piArgs, interactiveAfterExit: true,
         statusFileEnv: STATUS_FILE_ENV,
-        env: { [AGENT_LABEL_ENV]: label, [DEPTH_ENV]: String(depth + 1), PI_BACKGROUND_AGENT_PARENT: parent },
+        env: { [AGENT_LABEL_ENV]: label, [DEPTH_ENV]: String(depth + 1), [MAX_DEPTH_ENV]: String(maxDepth), PI_BACKGROUND_AGENT_PARENT: parentTarget },
         metadata: { "@pi_agent_status": "running", "@pi_agent_model": model, "@pi_agent_thinking": thinking, "@pi_agent_expected_completion_at": String(expectedCompletionAt) },
       })
       const { id, target, statusFile } = task
