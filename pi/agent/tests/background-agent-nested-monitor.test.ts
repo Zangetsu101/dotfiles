@@ -120,7 +120,7 @@ test("a child agent waits for nested background monitors before reporting comple
     assert.equal(messages.length, 2)
   } finally {
     await emit("session_shutdown")
-    await Promise.all(taskTargets.map((target) => execFileAsync("tmux", ["kill-session", "-t", target]).catch(() => undefined)))
+    await Promise.all(taskTargets.map((target) => execFileAsync("tmux", ["kill-pane", "-t", target]).catch(() => undefined)))
     if (previousStatusFile === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
     else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousStatusFile
     if (previousTmuxPane === undefined) delete process.env.TMUX_PANE
