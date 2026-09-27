@@ -231,6 +231,14 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     agentsCache = (await listAgents(tasks, tmux, family.nodeId)).filter((agent) => agent.parentId === family!.nodeId)
   }
 
+  const stopMonitoring = (id: string) => {
+    watchers.get(id)?.close()
+    watchers.delete(id)
+    const timer = reconciliationTimers.get(id)
+    if (timer) clearInterval(timer)
+    reconciliationTimers.delete(id)
+  }
+
   const monitor = (agent: AgentSession) => {
     if (watchers.has(agent.id)) return
 
@@ -265,11 +273,14 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
 
       const completion = await tasks.claimCompletionOrReconcile(agent)
       if (!completion) {
-        if (settled && !(await tasks.completion(agent))) {
-          settled = false
-          agent.status = "running"
-          await tasks.setStatus(agent, "running")
-          pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
+        if (settled) {
+          if (await tasks.completion(agent)) stopMonitoring(agent.id)
+          else {
+            settled = false
+            agent.status = "running"
+            await tasks.setStatus(agent, "running")
+            pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
+          }
         }
         consuming = false
         return
@@ -309,6 +320,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         },
         { deliverAs: "followUp", triggerTurn: true },
       )
+      stopMonitoring(agent.id)
       consuming = false
     }
 
