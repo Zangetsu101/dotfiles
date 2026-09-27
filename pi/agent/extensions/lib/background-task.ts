@@ -353,7 +353,7 @@ export class BackgroundTasks {
       }
     }
     const discovered = [...windows.split("\n"), ...panes.split("\n")].filter(Boolean).map(parse)
-      .filter((task): task is BackgroundTask => task !== undefined && (task.kind !== "agent" || task.target.startsWith("@")))
+      .filter((task): task is BackgroundTask => task !== undefined && (task.kind === "agent" ? task.target.startsWith("@") : task.target.startsWith("%")))
     for (const task of discovered) this.known.set(task.id, task)
     const poolCounts = new Map<string, Map<string, number>>()
     for (const task of discovered) {

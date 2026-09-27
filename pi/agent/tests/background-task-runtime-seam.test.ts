@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import backgroundAgentExtension from "../extensions/background-agent.ts"
 import backgroundMonitorExtension from "../extensions/background-monitor.ts"
+import { formatRunningTasks } from "../extensions/background-task-status.ts"
 import { BackgroundTasks } from "../extensions/lib/background-task.ts"
 import { FakePiRuntime, FakeTmuxProcessAdapter } from "./support/background-task-runtime.ts"
 
@@ -49,6 +50,23 @@ test("task list does not count an agent's inherited pane metadata twice", async 
   assert.equal((runtime.notifications.at(-1)?.match(new RegExp(agent.details.id, "g")) ?? []).length, 1)
   await runtime.emit("session_shutdown", { reason: "reload" })
 }))
+
+test("a monitor inherited by its pool window counts once in the status line", async () => {
+  const tmux = new FakeTmuxProcessAdapter()
+  const originalRun = tmux.run.bind(tmux)
+  tmux.run = async (args) => {
+    const result = await originalRun(args)
+    if (args[0] !== "list-windows") return result
+    const format = args[args.indexOf("-F") + 1]!
+    const panes = await originalRun(["list-panes", "-a", "-F", format.replace("#{window_id}", "#{pane_id}")])
+    const inherited = panes.split("\n").filter((line) => line.includes("\tmonitor\t"))
+      .map((line) => line.replace(/^%\d+/, "@pool"))
+    return [result, ...inherited].filter(Boolean).join("\n")
+  }
+  const tasks = new BackgroundTasks(tmux)
+  await tasks.create({ ...family, kind: "monitor", label: "build", parentId: "root-one" })
+  assert.equal(formatRunningTasks(await tasks.list({ subtreeRootId: "root-one" }, true), "root-one"), "tasks: 1 monitor")
+})
 
 test("resuming in a new root pane updates direct children's parent navigation", async () => {
   const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
