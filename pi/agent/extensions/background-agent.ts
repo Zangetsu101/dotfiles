@@ -29,6 +29,7 @@ const AGENT_LABEL_ENV = "PI_BACKGROUND_AGENT_LABEL"
 const DEFAULT_MAX_AGENT_DEPTH = 2
 const MAX_RESULT_CHARS = 50_000
 const POLL_MS = 100
+const SETTLED_POLL_MS = 2_000
 
 type AgentSession = {
   id: string
@@ -93,6 +94,7 @@ type BackgroundAgentOptions = {
   tmux?: TmuxProcessAdapter
   millisecondsPerMinute?: number
   pollMs?: number
+  settledPollMs?: number
 }
 
 function piInvocation(): { command: string; args: string[] } {
@@ -212,6 +214,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   const tmux = options.tmux ?? directTmux
   const millisecondsPerMinute = options.millisecondsPerMinute ?? 60_000
   const pollMs = options.pollMs ?? POLL_MS
+  const settledPollMs = options.settledPollMs ?? SETTLED_POLL_MS
   const childStatusFile = process.env[STATUS_FILE_ENV]
   const parsedDepth = Number.parseInt(process.env[DEPTH_ENV] ?? "", 10)
   const depth = childStatusFile ? (Number.isFinite(parsedDepth) ? parsedDepth : 1) : 0
@@ -239,6 +242,10 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     reconciliationTimers.delete(id)
   }
 
+  const stopAllMonitoring = () => {
+    for (const id of watchers.keys()) stopMonitoring(id)
+  }
+
   const monitor = (agent: AgentSession) => {
     if (watchers.has(agent.id)) return
 
@@ -246,7 +253,30 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     if (agent.status === "running") pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
     let settled = agent.status !== "running"
     let consuming = false
+    let checkingSettled = false
     let consumingOverrun = false
+    let watcher: FSWatcher
+    const setPoll = (callback: () => void, interval: number) => {
+      if (shuttingDown || watchers.get(agent.id) !== watcher) return
+      const previous = reconciliationTimers.get(agent.id)
+      if (previous) clearInterval(previous)
+      reconciliationTimers.set(agent.id, setInterval(callback, interval))
+    }
+    const checkSettled = async () => {
+      if (!settled || shuttingDown || checkingSettled) return
+      checkingSettled = true
+      try {
+        if (await tasks.completion(agent)) return
+        settled = false
+        agent.status = "running"
+        await tasks.setStatus(agent, "running")
+        pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
+        setPoll(() => void consume(), pollMs)
+        void consume()
+      } finally {
+        checkingSettled = false
+      }
+    }
     const consumeOverrun = async () => {
       if (settled || consumingOverrun || shuttingDown) return
       consumingOverrun = true
@@ -268,20 +298,12 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       }
     }
     const consume = async () => {
+      if (settled) return void checkSettled()
       if (consuming || shuttingDown) return
       consuming = true
 
       const completion = await tasks.claimCompletionOrReconcile(agent)
       if (!completion) {
-        if (settled) {
-          if (await tasks.completion(agent)) stopMonitoring(agent.id)
-          else {
-            settled = false
-            agent.status = "running"
-            await tasks.setStatus(agent, "running")
-            pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
-          }
-        }
         consuming = false
         return
       }
@@ -320,23 +342,28 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         },
         { deliverAs: "followUp", triggerTurn: true },
       )
-      stopMonitoring(agent.id)
+      setPoll(() => void checkSettled(), settledPollMs)
       consuming = false
     }
 
-    const watcher = watch(dirname(agent.statusFile), (_event, filename) => {
+    watcher = watch(dirname(agent.statusFile), (_event, filename) => {
       if (!filename) {
-        void consume()
+        if (settled) void checkSettled()
+        else void consume()
         void consumeOverrun()
         return
       }
       const changed = filename.toString()
-      if (changed === basename(agent.statusFile)) void consume()
+      if (changed === basename(agent.statusFile)) {
+        if (settled) void checkSettled()
+        else void consume()
+      }
       if (changed === basename(overrunFile(agent.statusFile))) void consumeOverrun()
     })
     watchers.set(agent.id, watcher)
-    reconciliationTimers.set(agent.id, setInterval(() => void consume(), pollMs))
-    void consume()
+    setPoll(() => settled ? void checkSettled() : void consume(), settled ? settledPollMs : pollMs)
+    if (settled) void checkSettled()
+    else void consume()
     void consumeOverrun()
   }
 
@@ -345,10 +372,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     for (const agent of agentsCache) if (agent.statusFile) monitor(agent)
   })
   pi.on("session_tree", async (_event, ctx) => {
-    for (const watcher of watchers.values()) watcher.close()
-    watchers.clear()
-    for (const timer of reconciliationTimers.values()) clearInterval(timer)
-    reconciliationTimers.clear()
+    stopAllMonitoring()
     await restoreFamily("tree", ctx)
     for (const agent of agentsCache) if (agent.statusFile) monitor(agent)
   })
@@ -415,9 +439,6 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
 
   pi.on("session_shutdown", () => {
     shuttingDown = true
-    for (const watcher of watchers.values()) watcher.close()
-    watchers.clear()
-    for (const timer of reconciliationTimers.values()) clearInterval(timer)
-    reconciliationTimers.clear()
+    stopAllMonitoring()
   })
 }

@@ -1,14 +1,20 @@
 import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import backgroundAgentExtension from "../extensions/background-agent.ts"
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+const waitFor = async (condition: () => boolean) => {
+  for (let attempt = 0; attempt < 50 && !condition(); attempt++) await pause(10)
+  assert.ok(condition(), "condition was not met")
+}
 
-for (const outcome of ["settled", "exit"] as const) test(`${outcome} agents stop polling, including after session restoration`, async () => {
+for (const outcome of ["settled", "exit"] as const) test(outcome === "settled"
+  ? "settled agents pause reconciliation and detect a new assignment"
+  : "exited agents stop reconciliation after session restoration", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-agent-monitor-"))
   const agent = {
     id: "agent-one", kind: "agent", target: "test:agent", label: "test", status: "running",
@@ -22,6 +28,7 @@ for (const outcome of ["settled", "exit"] as const) test(`${outcome} agents stop
     list: async () => [{ ...agent, status: completed ? (outcome === "exit" ? "failed" : "succeeded") : "running" }],
     claimCompletionOrReconcile: async () => { claims++; if (!completed || claimed) return undefined; claimed = true; return completion },
     completion: async () => completed ? completion : undefined,
+    setStatus: async () => {},
   }
   const handlers = new Map<string, Array<(event: any, ctx: any) => Promise<void> | void>>()
   const messages: unknown[] = []
@@ -42,13 +49,13 @@ for (const outcome of ["settled", "exit"] as const) test(`${outcome} agents stop
       tasks: tasks as any,
       tmux: { run: async () => "" },
       pollMs: 10,
+      settledPollMs: 20,
     })
     await emit("session_start")
-    await pause(60)
-    assert.ok(claims >= 2, "running agent should be reconciled repeatedly")
+    await waitFor(() => claims >= 2)
     completed = true
-    await pause(60)
-    assert.equal(messages.length, 1)
+    await writeFile(agent.statusFile, JSON.stringify(completion))
+    await waitFor(() => messages.length === 1)
     const afterCompletion = claims
     await pause(60)
     assert.equal(claims, afterCompletion, "settled agent must not keep polling")
@@ -59,6 +66,17 @@ for (const outcome of ["settled", "exit"] as const) test(`${outcome} agents stop
     await pause(60)
     assert.equal(claims, afterRestore, "restored settled agent must not keep polling")
     assert.equal(messages.length, 1)
+
+    if (outcome === "settled") {
+      completed = false
+      claimed = false
+      await rm(agent.statusFile)
+      const beforeRestart = claims
+      await waitFor(() => claims > beforeRestart + 1)
+      completed = true
+      await writeFile(agent.statusFile, JSON.stringify(completion))
+      await waitFor(() => messages.length === 2)
+    }
   } finally {
     await emit("session_shutdown")
     await rm(directory, { recursive: true, force: true })
