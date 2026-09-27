@@ -21,7 +21,7 @@ test("background agents are available through depth one and unavailable at depth
   }
 
   try {
-    assert.deepEqual(await registeredAtDepth("1"), ["background_agent"])
+    assert.deepEqual(await registeredAtDepth("1"), ["background_agent_message", "background_agent"]) 
     assert.deepEqual(await registeredAtDepth("2"), [])
   } finally {
     if (previousAgentStatus === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
@@ -50,7 +50,7 @@ test("generic background task metadata does not turn Pi into an agent child brid
       registerTool(tool: { name: string }) { tools.push(tool.name) },
       getThinkingLevel() { return "medium" },
     } as any)
-    assert.deepEqual(tools, ["background_agent"])
+    assert.deepEqual(tools, ["background_agent_message", "background_agent"])
   } finally {
     if (previousTaskStatus === undefined) delete process.env.PI_BACKGROUND_TASK_STATUS_FILE
     else process.env.PI_BACKGROUND_TASK_STATUS_FILE = previousTaskStatus

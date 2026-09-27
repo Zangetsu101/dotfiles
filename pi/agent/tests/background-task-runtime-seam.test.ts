@@ -20,6 +20,54 @@ async function withTmuxEnvironment(run: () => Promise<void>) {
   }
 }
 
+async function withSteerableChild(run: (parent: FakePiRuntime, child: FakePiRuntime, id: string) => Promise<void>) {
+  await withTmuxEnvironment(async () => {
+    const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+    const parent = new FakePiRuntime({ sessionId: "steering" })
+    await backgroundAgentExtension(parent.pi, { tasks, tmux, pollMs: 5 })
+    await parent.emit("session_start", { reason: "startup" })
+    const agent = await parent.execute("background_agent", { task: "review", expectedCompletionMinutes: 1 })
+    const child = new FakePiRuntime({ sessionId: "child" })
+    const previous = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
+    process.env.PI_BACKGROUND_AGENT_STATUS_FILE = agent.details.statusFile
+    try { await backgroundAgentExtension(child.pi, { tasks, tmux, pollMs: 5 }) } finally {
+      if (previous === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
+      else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previous
+    }
+    await child.emit("session_start", { reason: "startup" })
+    try { await run(parent, child, agent.details.id) } finally {
+      await child.emit("session_shutdown")
+      await parent.emit("session_shutdown")
+    }
+  })
+}
+
+test("a running child receives a steer in its Pi conversation and acknowledges delivery", async () => withSteerableChild(async (parent, child, id) => {
+  await child.emit("agent_start")
+  const result = await parent.execute("background_agent_message", { id, message: "Check the edge case" })
+  assert.equal(result.details.status, "delivered")
+  assert.deepEqual(child.userMessages, [{ text: "Check the edge case", options: { deliverAs: "steer" } }])
+}))
+
+test("an idle child accepts a message without steering an active turn", async () => withSteerableChild(async (parent, child, id) => {
+  const result = await parent.execute("background_agent_message", { id, message: "Use the account currency" })
+  assert.equal(result.details.status, "delivered")
+  assert.deepEqual(child.userMessages, [{ text: "Use the account currency", options: undefined }])
+}))
+
+test("messages cannot address other task families or settled agents", async () => withTmuxEnvironment(async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+  const parent = new FakePiRuntime({ sessionId: "steer-boundary" })
+  await backgroundAgentExtension(parent.pi, { tasks, tmux, pollMs: 5 }); await parent.emit("session_start", { reason: "startup" })
+  const agent = await parent.execute("background_agent", { task: "review", expectedCompletionMinutes: 1 })
+  const foreign = await tasks.create({ ...family, kind: "agent", label: "foreign", parentId: family.rootId })
+  assert.equal((await parent.execute("background_agent_message", { id: foreign.id, message: "no" })).details.status, "not_running")
+  assert.equal((await parent.execute("background_agent_message", { id: agent.details.id, message: "  " })).details.status, "error")
+  await tmux.complete(agent.details.target, "completed", "done")
+  assert.equal((await parent.execute("background_agent_message", { id: agent.details.id, message: "too late" })).details.status, "not_running")
+  await parent.emit("session_shutdown")
+}))
+
 test("nested and current-node work shares one family session while discovery stays in the node subtree", async () => {
   const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
   const first = await tasks.create({ ...family, kind: "agent", label: "research", parentId: "root-one", parentLabel: "root", parentTarget: "%root" })

@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process"
-import { basename, dirname } from "node:path"
-import { access, open, rm } from "node:fs/promises"
+import { randomUUID } from "node:crypto"
+import { basename, dirname, join } from "node:path"
+import { access, mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { promisify } from "node:util"
 import { watch, type FSWatcher } from "node:fs"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
@@ -162,7 +163,58 @@ async function listAgents(tasks: BackgroundTasks, tmux: TmuxProcessAdapter, subt
   })
 }
 
-async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: TmuxProcessAdapter): Promise<void> {
+async function withMailboxLock<T>(statusFile: string, operation: () => Promise<T>): Promise<T> {
+  const lock = `${statusFile}.message-lock`
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await mkdir(lock)
+      break
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST" || attempt >= 100) throw error
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+  }
+  try { return await operation() } finally { await rm(lock, { recursive: true, force: true }) }
+}
+
+async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: TmuxProcessAdapter, pollMs: number): Promise<void> {
+  const mailbox = `${statusFile}.messages`
+  let processing = false
+  let busy = false
+  let closed = false
+  let timer: NodeJS.Timeout | undefined
+  const receive = async () => {
+    if (busy || closed) return
+    busy = true
+    try {
+      for (const name of (await readdir(mailbox).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return [] as string[]
+        throw error
+      })).filter((name) => name.endsWith(".request"))) {
+        const id = name.slice(0, -8)
+        const request = join(mailbox, name)
+        const ack = join(mailbox, `${id}.ack`)
+        try {
+          const message = await readFile(request, "utf8")
+          pi.sendUserMessage(message, processing ? { deliverAs: "steer" } : undefined)
+          await writeFile(ack, "delivered", { flag: "wx", mode: 0o600 })
+        } catch (error) {
+          await writeFile(ack, `error: ${String(error)}`, { flag: "wx", mode: 0o600 }).catch(() => undefined)
+        }
+        if (await readFile(ack, "utf8").catch(() => undefined)) await rm(request, { force: true })
+      }
+    } finally { busy = false }
+  }
+  pi.on("session_start", async () => {
+    await mkdir(mailbox, { recursive: true, mode: 0o700 })
+    closed = false
+    if (timer) clearInterval(timer)
+    timer = setInterval(() => { void receive().catch((error) => console.error("background agent mailbox:", error)) }, pollMs)
+    await receive()
+  })
+  pi.on("session_shutdown", () => { closed = true; if (timer) clearInterval(timer) })
+  pi.on("agent_start", () => { processing = true })
+  pi.on("agent_end", () => { processing = false })
   const activeBackgroundActivities = new Set<string>()
   let reported = false
 
@@ -191,12 +243,19 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
 
   pi.on("agent_settled", async (_event, ctx) => {
     if (reported || activeBackgroundActivities.size > 0) return
-    reported = true
-    const result = finalAssistantOutput(ctx)
-    await writeTaskCompletion(statusFile, {
-      kind: "settled",
-      output: result.output,
-      stopReason: result.stopReason,
+    await receive()
+    await withMailboxLock(statusFile, async () => {
+      if ((await readdir(mailbox).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return [] as string[]
+        throw error
+      })).some((name) => name.endsWith(".request"))) return
+      reported = true
+      const result = finalAssistantOutput(ctx)
+      await writeTaskCompletion(statusFile, {
+        kind: "settled",
+        output: result.output,
+        stopReason: result.stopReason,
+      })
     })
   })
 
@@ -220,7 +279,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   const depth = childStatusFile ? (Number.isFinite(parsedDepth) ? parsedDepth : 1) : 0
   const configuredMaxDepth = Number.parseInt(process.env[MAX_DEPTH_ENV] ?? "", 10)
   const maxDepth = Number.isFinite(configuredMaxDepth) ? configuredMaxDepth : DEFAULT_MAX_AGENT_DEPTH
-  if (childStatusFile) await registerChildBridge(pi, childStatusFile, tmux)
+  if (childStatusFile) await registerChildBridge(pi, childStatusFile, tmux, pollMs)
   if (depth >= maxDepth) return
 
   const watchers = new Map<string, FSWatcher>()
@@ -378,6 +437,61 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   })
 
   pi.registerTool({
+    name: "background_agent_message",
+    label: "Message background agent",
+    description: "Send a message into a running background agent's Pi conversation and wait for acknowledgement.",
+    parameters: Type.Object({ id: Type.String(), message: Type.String() }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (!family) await restoreFamily("startup", ctx)
+      const agent = (await listAgents(tasks, tmux, family!.nodeId)).find((item) => item.id === params.id)
+      if (!params.message.trim()) return { content: [{ type: "text" as const, text: "Message must not be empty" }], details: { status: "error" } }
+      if (!agent || agent.status !== "running" || await tasks.completion(agent)) return { content: [{ type: "text" as const, text: "Agent is not running in this task subtree" }], details: { status: "not_running" } }
+      const mailbox = `${agent.statusFile}.messages`
+      const id = randomUUID()
+      const request = join(mailbox, `${id}.request`)
+      const ack = join(mailbox, `${id}.ack`)
+      const acknowledged = async () => {
+        const response = await readFile(ack, "utf8").catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return undefined
+          throw error
+        })
+        if (!response) return undefined
+        await rm(ack, { force: true })
+        return { content: [{ type: "text" as const, text: response }], details: { status: response === "delivered" ? "delivered" : "error" } }
+      }
+      try {
+        await mkdir(mailbox, { recursive: true, mode: 0o700 })
+        const temporary = join(mailbox, `${id}.tmp`)
+        await writeFile(temporary, params.message, { mode: 0o600 })
+        const queued = await withMailboxLock(agent.statusFile, async () => {
+          if (await tasks.completion(agent)) return false
+          await rename(temporary, request)
+          return true
+        })
+        if (!queued) {
+          await rm(temporary, { force: true })
+          return { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { status: "not_running" } }
+        }
+        for (let attempt = 0; attempt < 100; attempt++) {
+          const response = await acknowledged()
+          if (response) return response
+          const current = (await listAgents(tasks, tmux, family!.nodeId)).find((item) => item.id === agent.id)
+          if (!current || current.status !== "running" || await tasks.completion(agent)) {
+            const lateAck = await acknowledged()
+            if (lateAck) return lateAck
+            await rm(request, { force: true })
+            return { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { status: "not_running" } }
+          }
+          await new Promise((resolve) => setTimeout(resolve, pollMs))
+        }
+        return { content: [{ type: "text" as const, text: "Acknowledgement timed out; delivery is unconfirmed and message may still be queued" }], details: { status: "error" } }
+      } catch (error) {
+        return { content: [{ type: "text" as const, text: `${String(error)}; message may still be pending` }], details: { status: "error" } }
+      }
+    },
+  })
+
+  pi.registerTool({
     name: "background_agent",
     label: "Background agent",
     description:
@@ -387,6 +501,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       "Delegated Pi work: use background_agent so the user can inspect it.",
       "After background_agent starts, continue independent work. When only delegated work remains, yield the turn; the automatic completion or overrun notification will resume you.",
       "While delegated work is active, report progress rather than the result. After all delegated work returns, provide the complete standalone result in the final turn.",
+      "Use background_agent_message to steer a running agent in your task subtree; wait for its delivery acknowledgement before treating the message as received.",
       "Monitor a background agent's session after an overrun notification or other concrete evidence of a stall; follow up until it completes or needs intervention."
     ],
     parameters: Type.Object({
