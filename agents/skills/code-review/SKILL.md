@@ -1,5 +1,6 @@
 ---
 name: code-review
+source: https://github.com/mattpocock/skills/tree/main/skills/engineering/code-review
 description: "Review changes since a commit, branch, tag, or merge-base on two independent axes: repository standards and the originating spec. Use for branch, PR, work-in-progress, or review-since requests."
 ---
 

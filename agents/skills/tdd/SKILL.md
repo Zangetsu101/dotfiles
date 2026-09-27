@@ -1,5 +1,6 @@
 ---
 name: tdd
+source: https://github.com/mattpocock/skills/tree/main/skills/engineering/tdd
 description: Test-driven development. Use when the user wants to build features or fix bugs test-first, mentions "red-green-refactor", or wants integration tests.
 ---
 

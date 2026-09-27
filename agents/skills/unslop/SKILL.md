@@ -1,5 +1,6 @@
 ---
 name: unslop
+source: https://github.com/cursor/plugins/blob/main/pstack/skills/unslop/SKILL.md
 description: Cut AI tells from any writing. Use before sending any user-facing prose.
 ---
 

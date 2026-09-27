@@ -1,5 +1,6 @@
 ---
 name: deslop
+source: https://github.com/cursor/plugins/blob/main/cursor-team-kit/skills/deslop/SKILL.md
 description: Remove AI-generated code slop and clean up code style
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: wait-what
+source: https://github.com/mattpocock/skills/tree/main/skills/productivity/wait-what
 description: "Stop. That last message did not land: re-pitch it."
 disable-model-invocation: true
 ---

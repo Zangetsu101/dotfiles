@@ -1,5 +1,6 @@
 ---
 name: writing-for-agents
+source: https://github.com/mattpocock/skills/tree/main/skills/productivity/writing-for-agents
 description: Writing documents for agents. Use before creating or editing a skill, AGENTS.md, CLAUDE.md, tool metadata, or any document they point to.
 ---
 
