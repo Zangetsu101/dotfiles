@@ -414,6 +414,15 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       const id = randomUUID()
       const request = join(mailbox, `${id}.request`)
       const ack = join(mailbox, `${id}.ack`)
+      const acknowledged = async () => {
+        const response = await readFile(ack, "utf8").catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return undefined
+          throw error
+        })
+        if (!response) return undefined
+        await rm(ack, { force: true })
+        return { content: [{ type: "text" as const, text: response }], details: { status: response === "delivered" ? "delivered" : "error" } }
+      }
       try {
         await mkdir(mailbox, { recursive: true, mode: 0o700 })
         const temporary = join(mailbox, `${id}.tmp`)
@@ -428,18 +437,12 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
           return { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { status: "not_running" } }
         }
         for (let attempt = 0; attempt < 100; attempt++) {
-          const response = await readFile(ack, "utf8").catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error })
-          if (response) {
-            await rm(ack, { force: true })
-            return { content: [{ type: "text" as const, text: response }], details: { status: response === "delivered" ? "delivered" : "error" } }
-          }
+          const response = await acknowledged()
+          if (response) return response
           const current = (await listAgents(tasks, tmux, family!.nodeId)).find((item) => item.id === agent.id)
           if (!current || current.status !== "running" || await tasks.completion(agent)) {
-            const lateAck = await readFile(ack, "utf8").catch(() => undefined)
-            if (lateAck) {
-              await rm(ack, { force: true })
-              return { content: [{ type: "text" as const, text: lateAck }], details: { status: lateAck === "delivered" ? "delivered" : "error" } }
-            }
+            const lateAck = await acknowledged()
+            if (lateAck) return lateAck
             await rm(request, { force: true })
             return { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { status: "not_running" } }
           }

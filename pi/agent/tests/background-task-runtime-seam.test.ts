@@ -19,42 +19,39 @@ async function withTmuxEnvironment(run: () => Promise<void>) {
   }
 }
 
-test("a running child receives a steer in its Pi conversation and acknowledges delivery", async () => withTmuxEnvironment(async () => {
-  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
-  const parent = new FakePiRuntime({ sessionId: "steering" })
-  await backgroundAgentExtension(parent.pi, { tasks, tmux, pollMs: 5 }); await parent.emit("session_start", { reason: "startup" })
-  const agent = await parent.execute("background_agent", { task: "review", expectedCompletionMinutes: 1 })
-  const child = new FakePiRuntime({ sessionId: "child" })
-  const previous = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
-  process.env.PI_BACKGROUND_AGENT_STATUS_FILE = agent.details.statusFile
-  try { await backgroundAgentExtension(child.pi, { tasks, tmux, pollMs: 5 }) } finally {
-    if (previous === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE; else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previous
-  }
-  await child.emit("session_start", { reason: "startup" })
+async function withSteerableChild(run: (parent: FakePiRuntime, child: FakePiRuntime, id: string) => Promise<void>) {
+  await withTmuxEnvironment(async () => {
+    const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+    const parent = new FakePiRuntime({ sessionId: "steering" })
+    await backgroundAgentExtension(parent.pi, { tasks, tmux, pollMs: 5 })
+    await parent.emit("session_start", { reason: "startup" })
+    const agent = await parent.execute("background_agent", { task: "review", expectedCompletionMinutes: 1 })
+    const child = new FakePiRuntime({ sessionId: "child" })
+    const previous = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
+    process.env.PI_BACKGROUND_AGENT_STATUS_FILE = agent.details.statusFile
+    try { await backgroundAgentExtension(child.pi, { tasks, tmux, pollMs: 5 }) } finally {
+      if (previous === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
+      else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previous
+    }
+    await child.emit("session_start", { reason: "startup" })
+    try { await run(parent, child, agent.details.id) } finally {
+      await child.emit("session_shutdown")
+      await parent.emit("session_shutdown")
+    }
+  })
+}
+
+test("a running child receives a steer in its Pi conversation and acknowledges delivery", async () => withSteerableChild(async (parent, child, id) => {
   await child.emit("agent_start")
-  const result = await parent.execute("background_agent_message", { id: agent.details.id, message: "Check the edge case" })
+  const result = await parent.execute("background_agent_message", { id, message: "Check the edge case" })
   assert.equal(result.details.status, "delivered")
   assert.deepEqual(child.userMessages, [{ text: "Check the edge case", options: { deliverAs: "steer" } }])
-  await child.emit("session_shutdown")
-  await parent.emit("session_shutdown")
 }))
 
-test("an idle child accepts a message without steering an active turn", async () => withTmuxEnvironment(async () => {
-  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
-  const parent = new FakePiRuntime({ sessionId: "idle-steering" })
-  await backgroundAgentExtension(parent.pi, { tasks, tmux, pollMs: 5 }); await parent.emit("session_start", { reason: "startup" })
-  const agent = await parent.execute("background_agent", { task: "review", expectedCompletionMinutes: 1 })
-  const child = new FakePiRuntime({ sessionId: "idle-child" })
-  const previous = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
-  process.env.PI_BACKGROUND_AGENT_STATUS_FILE = agent.details.statusFile
-  try { await backgroundAgentExtension(child.pi, { tasks, tmux, pollMs: 5 }) } finally {
-    if (previous === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE; else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previous
-  }
-  await child.emit("session_start", { reason: "startup" })
-  const result = await parent.execute("background_agent_message", { id: agent.details.id, message: "Use the account currency" })
+test("an idle child accepts a message without steering an active turn", async () => withSteerableChild(async (parent, child, id) => {
+  const result = await parent.execute("background_agent_message", { id, message: "Use the account currency" })
   assert.equal(result.details.status, "delivered")
   assert.deepEqual(child.userMessages, [{ text: "Use the account currency", options: undefined }])
-  await child.emit("session_shutdown"); await parent.emit("session_shutdown")
 }))
 
 test("messages cannot address other task families or settled agents", async () => withTmuxEnvironment(async () => {
