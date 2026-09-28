@@ -500,7 +500,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     promptGuidelines: [
       "Delegated Pi work: use background_agent so the user can inspect it.",
       "After background_agent starts, continue independent work. When only delegated work remains, yield the turn; the automatic completion or overrun notification will resume you.",
-      "While delegated work is active, report progress rather than the result. After all delegated work returns, provide the complete standalone result in the final turn.",
+      "While delegated work is active, report progress rather than claiming a final result. After it's finished, handle its result and return to the conversation's pending work. If the user was waiting to answer a question or make a decision, reconsider it in light of the result and restate the question. If no user input is pending and the work is complete, provide a standalone final result.",
       "Use background_agent_message to steer a running agent in your task subtree; wait for its delivery acknowledgement before treating the message as received.",
       "Monitor a background agent's session after an overrun notification or other concrete evidence of a stall; follow up until it completes or needs intervention."
     ],
