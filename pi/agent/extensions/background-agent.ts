@@ -439,7 +439,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   pi.registerTool({
     name: "background_agent_message",
     label: "Message background agent",
-    description: "Send a message into a running background agent's Pi conversation and wait for acknowledgement.",
+    description: "Send a message to an unfinished background agent. Steers its active turn or starts a new turn if idle; waits for delivery acknowledgement.",
     parameters: Type.Object({ id: Type.String(), message: Type.String() }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       if (!family) await restoreFamily("startup", ctx)
