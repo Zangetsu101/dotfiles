@@ -138,6 +138,8 @@ test("task completion searches task kind, status, label, id, and target", () => 
   assert.deepEqual(taskArgumentCompletions([agent, monitor], "attach agent")?.map((item) => item.value), ["attach agent-one"])
   assert.deepEqual(taskArgumentCompletions([agent, monitor], "attach succeeded")?.map((item) => item.value), ["attach agent-one"])
   assert.deepEqual(taskArgumentCompletions([agent, monitor], "attach release-target")?.map((item) => item.value), ["attach monitor-one"])
+  assert.equal(taskArgumentCompletions([agent, monitor], "attach agent", "agent-one"), null)
+  assert.deepEqual(taskArgumentCompletions([agent, monitor], "terminate agent", "agent-one")?.map((item) => item.value), ["terminate agent-one"])
 })
 
 test("reload hands a running monitor to the replacement runtime and reports its completion once", async () => {

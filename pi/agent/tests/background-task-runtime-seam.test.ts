@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { rm } from "node:fs/promises"
 import backgroundAgentExtension from "../extensions/background-agent.ts"
 import backgroundMonitorExtension from "../extensions/background-monitor.ts"
 import { formatRunningTasks } from "../extensions/background-task-status.ts"
@@ -164,6 +165,24 @@ test("agent windows and pooled monitor panes complete, remain discoverable, and 
   assert.match(runtime.messages.find((message) => message.customType === "background-monitor")?.content ?? "", /build output/)
   assert.match(runtime.messages.find((message) => message.customType === "background-agent")?.content ?? "", /review output/)
   assert.deepEqual((await tasks.list({ familyId: "family:one" })).map((task) => task.status).sort(), ["succeeded", "succeeded"])
+  await runtime.commands.get("task").handler("clean", runtime.context)
+  assert.deepEqual(await tasks.list({ familyId: "family:one" }), [])
+  await runtime.emit("session_shutdown", { reason: "reload" })
+}))
+
+test("clean stops watching a settled agent", async () => withTmuxEnvironment(async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux); const runtime = new FakePiRuntime({ sessionId: "clean-watch" })
+  backgroundMonitorExtension(runtime.pi, { tasks }); await backgroundAgentExtension(runtime.pi, { tasks, tmux, pollMs: 5, settledPollMs: 5 }); await runtime.emit("session_start", { reason: "startup" })
+  const agent = await runtime.execute("background_agent", { task: "review", label: "review", expectedCompletionMinutes: 1 })
+  await tmux.complete(agent.details.target)
+  await waitFor(() => runtime.messages.length === 1)
+  const [task] = await tasks.list({ familyId: "family:clean-watch" })
+  await runtime.commands.get("task").handler(`clean ${agent.details.id}`, runtime.context)
+  const entryCount = runtime.entries.length
+  await rm(task!.statusFile)
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  assert.equal(runtime.entries.length, entryCount)
+  assert.deepEqual(await tasks.list({ familyId: "family:clean-watch" }), [])
   await runtime.emit("session_shutdown", { reason: "reload" })
 }))
 

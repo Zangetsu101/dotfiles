@@ -13,6 +13,7 @@ import {
 } from "./lib/background-activity.ts"
 import {
   BACKGROUND_TASK_CREATED,
+  BACKGROUND_TASK_REMOVED,
   BACKGROUND_TASK_STATUS_CHANGED,
   BackgroundTasks,
   systemTmux,
@@ -305,6 +306,10 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     for (const id of watchers.keys()) stopMonitoring(id)
   }
 
+  pi.events.on(BACKGROUND_TASK_REMOVED, (task) => {
+    stopMonitoring((task as { id: string }).id)
+  })
+
   const monitor = (agent: AgentSession) => {
     if (watchers.has(agent.id)) return
 
@@ -325,7 +330,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       if (!settled || shuttingDown || checkingSettled) return
       checkingSettled = true
       try {
-        if (await tasks.completion(agent)) return
+        if (await tasks.completion(agent) || watchers.get(agent.id) !== watcher) return
         settled = false
         agent.status = "running"
         await tasks.setStatus(agent, "running")
@@ -362,6 +367,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       consuming = true
 
       const completion = await tasks.claimCompletionOrReconcile(agent)
+      if (watchers.get(agent.id) !== watcher) { consuming = false; return }
       if (!completion) {
         consuming = false
         return
@@ -383,6 +389,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         tmux.run(["set-option", "-w", "-t", agent.target, "@pi_task_status", taskStatus]),
       ]).catch(() => undefined)
 
+      if (watchers.get(agent.id) !== watcher) { consuming = false; return }
       const summary = `Background agent ${agent.id} (${agent.label}) ${status}.`
       agent.status = taskStatus
       const cached = agentsCache.find((item) => item.id === agent.id)
@@ -393,6 +400,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         : `tmux attach -t ${agent.target}`
       const output = "output" in completion ? completion.output?.trim() || "(no final output)" : "(no final output)"
 
+      if (watchers.get(agent.id) !== watcher) { consuming = false; return }
       pi.sendMessage(
         {
           customType: "background-agent",

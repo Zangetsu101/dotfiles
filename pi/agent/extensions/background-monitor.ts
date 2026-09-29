@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 import { BACKGROUND_ACTIVITY_FINISHED, BACKGROUND_ACTIVITY_STARTED, type BackgroundActivity } from "./lib/background-activity.ts"
-import { BACKGROUND_TASK_CREATED, BACKGROUND_TASK_STATUS_CHANGED, BackgroundTasks, safeTaskLabel, type BackgroundTask } from "./lib/background-task.ts"
+import { BACKGROUND_TASK_CREATED, BACKGROUND_TASK_REMOVED, BACKGROUND_TASK_STATUS_CHANGED, BackgroundTasks, safeTaskLabel, type BackgroundTask } from "./lib/background-task.ts"
 import { FAMILY_ENTRY, familyForContext, familyTaskParent, type TaskFamily } from "./lib/background-family.ts"
 
 const MAX_OUTPUT_CHARS = 50_000
@@ -31,7 +31,7 @@ export function formatTaskTree(tasks: BackgroundTask[], rootId: string): string 
   return lines.join("\n")
 }
 
-export function taskArgumentCompletions(tasks: BackgroundTask[], prefix: string) {
+export function taskArgumentCompletions(tasks: BackgroundTask[], prefix: string, currentTaskId?: string) {
   const actions = ["list", "attach", "parent", "return", "terminate", "clean"]
   const normalized = prefix.trimStart()
   if (!normalized) return actions.map((value) => ({ value, label: value }))
@@ -44,6 +44,7 @@ export function taskArgumentCompletions(tasks: BackgroundTask[], prefix: string)
   if (action !== "attach" && action !== "terminate" && action !== "clean") return null
   const query = words.slice(1).join(" ").toLowerCase()
   const matches = tasks.filter((task) =>
+    (action !== "attach" || task.id !== currentTaskId) &&
     [task.kind, task.status, task.label, safeTaskLabel(task.label), task.id, task.target]
       .join(" ")
       .toLowerCase()
@@ -68,6 +69,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
   const configuredSubtreeRootId = options.subtreeRootId
   const timers = new Map<string, NodeJS.Timeout>()
   const consumers = new Set<Promise<void>>()
+  const removedTasks = new Set<string>()
   const activities = new Map<string, BackgroundActivity>()
   let shuttingDown = false
   let shutdown: Promise<void> | undefined
@@ -117,13 +119,14 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     activities.set(task.id, activity)
     pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
     const consume = async () => {
-      if (shuttingDown) return
+      if (shuttingDown || removedTasks.has(task.id)) return
       const completion = await tasks.claimCompletionOrReconcile(task)
-      if (!completion || !("status" in completion)) return
+      if (removedTasks.has(task.id) || !completion || !("status" in completion)) return
       clearInterval(timers.get(task.id))
       timers.delete(task.id)
       activities.delete(task.id)
       await tasks.setStatus(task, completion.status === "completed" ? "succeeded" : completion.status === "cancelled" ? "terminated" : "failed")
+      if (removedTasks.has(task.id)) return
       pi.events.emit(BACKGROUND_TASK_STATUS_CHANGED, task)
       pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
       let output = ""
@@ -136,6 +139,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
           : `finished with exit code ${completion.exitCode ?? 0}`
       const summary = `Background monitor ${task.id} (${task.label}) ${status}.`
       const attach = process.env.TMUX ? `/task attach ${task.id}` : `tmux attach -t ${task.target}`
+      if (removedTasks.has(task.id)) return
       if (ctx.hasUI) ctx.ui.notify(summary, failed ? "error" : "info")
       pi.sendMessage({ customType: "background-monitor", content: `${summary}\nAttach with: ${attach}\n\nOutput:\n${output.trim() || "(no output)"}\n\nReview the result. When all background work has returned, provide the complete standalone result in your final turn, including any conclusions that remain unchanged.`, display: true }, { deliverAs: "followUp", triggerTurn: true })
     }
@@ -223,13 +227,23 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     if (!removed) return 0
     const remaining = new Set((await tasks.list({ subtreeRootId: scope() })).map((task) => task.id))
     for (const task of candidates) {
-      if (!remaining.has(task.id)) pi.appendEntry?.(TASK_REMOVED_ENTRY, { id: task.id, familyId: task.familyId })
+      if (!remaining.has(task.id)) {
+        removedTasks.add(task.id)
+        pi.appendEntry?.(TASK_REMOVED_ENTRY, { id: task.id, familyId: task.familyId })
+        const timer = timers.get(task.id)
+        if (timer) clearInterval(timer)
+        timers.delete(task.id)
+        const activity = activities.get(task.id)
+        if (activity) pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
+        activities.delete(task.id)
+        pi.events.emit(BACKGROUND_TASK_REMOVED, task)
+      }
     }
     taskCache = taskCache.filter((task) => remaining.has(task.id))
     return removed
   }
 
-  pi.registerCommand("task", { description: "List, attach, navigate, terminate, or clean background tasks", getArgumentCompletions: (prefix: string) => taskArgumentCompletions(taskCache, prefix), handler: async (args, ctx) => {
+  pi.registerCommand("task", { description: "List, attach, navigate, terminate, or clean background tasks", getArgumentCompletions: (prefix: string) => taskArgumentCompletions(taskCache, prefix, family?.nodeId), handler: async (args, ctx) => {
     const [action, ...rest] = args.trim().split(/\s+/); const reference = rest.join(" ")
     if (action === "list") {
       const all = await tasks.list({ subtreeRootId: scope() })
@@ -250,7 +264,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     if (resolved.kind === "ambiguous") { ctx.ui.notify(`Ambiguous background task label: ${reference}. Use its ID or tmux target.`, "error"); return }
     const task = resolved.task
     if (action === "clean") { ctx.ui.notify(`Cleaned ${await cleanTasks([task])} background task(s).`, "info"); return }
-    if (action === "attach") { const result = await tasks.attach(task); if (result !== "switched") ctx.ui.notify(`Run: ${result}`, "info"); return }
+    if (action === "attach") { if (task.id === family?.nodeId) { ctx.ui.notify("Already attached to this task.", "info"); return } const result = await tasks.attach(task); if (result !== "switched") ctx.ui.notify(`Run: ${result}`, "info"); return }
     if (action === "terminate") {
       const terminable = task.status === "running" || (task.kind === "agent" && task.status !== "terminated" && task.status !== "interrupted")
       if (!terminable) { ctx.ui.notify(`Task ${task.id} is already ${task.status}.`, "warning"); return }
