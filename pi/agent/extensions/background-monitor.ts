@@ -113,6 +113,15 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     await refreshTasks()
   }
 
+  const stopMonitoring = (id: string, finishActivity = true) => {
+    const timer = timers.get(id)
+    if (timer) clearInterval(timer)
+    timers.delete(id)
+    const activity = activities.get(id)
+    if (activity && finishActivity) pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
+    activities.delete(id)
+  }
+
   const monitor = (task: BackgroundTask, ctx: ExtensionContext) => {
     if (timers.has(task.id)) return
     const activity = { id: `background-monitor:${task.id}`, source: "background_monitor", label: task.label }
@@ -122,9 +131,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       if (shuttingDown || removedTasks.has(task.id)) return
       const completion = await tasks.claimCompletionOrReconcile(task)
       if (removedTasks.has(task.id) || !completion || !("status" in completion)) return
-      clearInterval(timers.get(task.id))
-      timers.delete(task.id)
-      activities.delete(task.id)
+      stopMonitoring(task.id, false)
       await tasks.setStatus(task, completion.status === "completed" ? "succeeded" : completion.status === "cancelled" ? "terminated" : "failed")
       if (removedTasks.has(task.id)) return
       pi.events.emit(BACKGROUND_TASK_STATUS_CHANGED, task)
@@ -230,12 +237,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       if (!remaining.has(task.id)) {
         removedTasks.add(task.id)
         pi.appendEntry?.(TASK_REMOVED_ENTRY, { id: task.id, familyId: task.familyId })
-        const timer = timers.get(task.id)
-        if (timer) clearInterval(timer)
-        timers.delete(task.id)
-        const activity = activities.get(task.id)
-        if (activity) pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
-        activities.delete(task.id)
+        stopMonitoring(task.id)
         pi.events.emit(BACKGROUND_TASK_REMOVED, task)
       }
     }
