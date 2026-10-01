@@ -1,7 +1,7 @@
-import { execFile, spawn } from "node:child_process"
+import { execFile } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { basename, dirname, join } from "node:path"
-import { access, mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
+import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises"
 import { promisify } from "node:util"
 import { watch, type FSWatcher } from "node:fs"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
@@ -22,6 +22,7 @@ import {
   type TmuxProcessAdapter,
 } from "./lib/background-task.ts"
 import { familyForContext, familyTaskParent, type TaskFamily } from "./lib/background-family.ts"
+import { taskCheckIns } from "./lib/task-check-in.ts"
 
 const execFileAsync = promisify(execFile)
 const STATUS_FILE_ENV = "PI_BACKGROUND_AGENT_STATUS_FILE"
@@ -48,6 +49,7 @@ type AgentSession = {
   rootId?: string
   rootPane?: string
   statusFile: string
+  outputFile?: string
   kind: "agent"
   cwd: string
 }
@@ -118,39 +120,6 @@ async function currentTmuxSession(tmux: TmuxProcessAdapter): Promise<string | un
 
 function currentTmuxPane(): string {
   return process.env.TMUX_PANE ?? ""
-}
-
-function overrunFile(statusFile: string): string {
-  return `${statusFile}.overrun`
-}
-
-function scheduleDeadline(statusFile: string, expectedCompletionAt: number): void {
-  const script = `
-const fs = require("node:fs")
-const [statusFile, markerFile, deadline] = process.argv.slice(1)
-setTimeout(() => {
-  if (fs.existsSync(statusFile)) return
-  try { fs.writeFileSync(markerFile, deadline, { flag: "wx", mode: 0o600 }) } catch (error) {
-    if (error.code !== "EEXIST") throw error
-  }
-}, Math.max(0, Number(deadline) - Date.now()))
-`
-  const child = spawn(process.execPath, ["-e", script, statusFile, overrunFile(statusFile), String(expectedCompletionAt)], {
-    detached: true,
-    stdio: "ignore",
-  })
-  child.unref()
-}
-
-async function claimOverrun(statusFile: string): Promise<boolean> {
-  try {
-    await access(overrunFile(statusFile))
-    const claim = await open(`${overrunFile(statusFile)}.notified`, "wx", 0o600)
-    await claim.close()
-    return true
-  } catch {
-    return false
-  }
 }
 
 async function listAgents(tasks: BackgroundTasks, tmux: TmuxProcessAdapter, subtreeRootId: string): Promise<AgentSession[]> {
@@ -235,8 +204,6 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
     await Promise.all([
       rm(statusFile, { force: true }),
       rm(`${statusFile}.notified`, { force: true }),
-      rm(overrunFile(statusFile), { force: true }),
-      rm(`${overrunFile(statusFile)}.notified`, { force: true }),
       tmux.run(["set-option", "-w", "@pi_agent_status", "running"]).catch(() => undefined),
       tmux.run(["set-option", "-w", "@pi_task_status", "running"]).catch(() => undefined),
     ])
@@ -295,6 +262,8 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   }
 
   const stopMonitoring = (id: string) => {
+    const agent = agentsCache.find((item) => item.id === id)
+    if (agent) taskCheckIns.stop(agent.statusFile)
     watchers.get(id)?.close()
     watchers.delete(id)
     const timer = reconciliationTimers.get(id)
@@ -318,7 +287,6 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     let settled = agent.status !== "running"
     let consuming = false
     let checkingSettled = false
-    let consumingOverrun = false
     let watcher: FSWatcher
     const setPoll = (callback: () => void, interval: number) => {
       if (shuttingDown || watchers.get(agent.id) !== watcher) return
@@ -341,26 +309,15 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         checkingSettled = false
       }
     }
-    const consumeOverrun = async () => {
-      if (settled || consumingOverrun || shuttingDown) return
-      consumingOverrun = true
-      try {
-        if (!(await claimOverrun(agent.statusFile))) return
-        if (await tasks.completion(agent)) return
-        const current = (await listAgents(tasks, tmux, agent.parentId ?? agent.id)).find((candidate) => candidate.id === agent.id)
-        if (!current || current.status !== "running") return
-        pi.sendMessage(
-          {
-            customType: "background-agent-check-in",
-            content: `Background agent ${agent.id} (${agent.label}) has worked past its expected completion time.`,
-            display: true,
-          },
-          { deliverAs: "followUp", triggerTurn: true },
-        )
-      } finally {
-        consumingOverrun = false
-      }
-    }
+    void taskCheckIns.watch(agent.statusFile, async () => {
+      if (settled || shuttingDown || await tasks.completion(agent)) return
+      const current = (await listAgents(tasks, tmux, agent.parentId ?? agent.id)).find((candidate) => candidate.id === agent.id)
+      if (!current || current.status !== "running") return
+      const output = agent.outputFile ? await readFile(agent.outputFile, "utf8").catch(() => "") : ""
+      const started = await stat(dirname(agent.statusFile)).catch(() => undefined)
+      const elapsed = started ? `${Math.floor((Date.now() - started.birthtimeMs) / 60_000)} minutes` : "unknown"
+      pi.sendMessage({ customType: "background-agent-check-in", content: `Background agent ${agent.id} (${agent.label}) is still running after ${elapsed}.\nRecent output:\n${output.slice(-4000).trim() || "(no output)"}\nUse background_task to inspect it or schedule another check-in.`, display: true }, { deliverAs: "followUp", triggerTurn: true })
+    })
     const consume = async () => {
       if (settled) return void checkSettled()
       if (consuming || shuttingDown) return
@@ -417,7 +374,6 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       if (!filename) {
         if (settled) void checkSettled()
         else void consume()
-        void consumeOverrun()
         return
       }
       const changed = filename.toString()
@@ -425,13 +381,11 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         if (settled) void checkSettled()
         else void consume()
       }
-      if (changed === basename(overrunFile(agent.statusFile))) void consumeOverrun()
     })
     watchers.set(agent.id, watcher)
     setPoll(() => settled ? void checkSettled() : void consume(), settled ? settledPollMs : pollMs)
     if (settled) void checkSettled()
     else void consume()
-    void consumeOverrun()
   }
 
   pi.on("session_start", async (event, ctx) => {
@@ -508,10 +462,10 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     promptSnippet: "Delegate work to an inspectable Pi agent running in tmux",
     promptGuidelines: [
       "Delegated Pi work: use background_agent so the user can inspect it.",
-      "After background_agent starts, continue independent work. When only delegated work remains, yield the turn; the automatic completion or overrun notification will resume you.",
+      "After background_agent starts, continue independent work. When only delegated work remains, yield the turn; a completion or check-in notification will resume you.",
       "While delegated work is active, report progress rather than claiming a final result. After it's finished, handle its result and return to the conversation's pending work. If the user was waiting to answer a question or make a decision, reconsider it in light of the result and restate the question. If no user input is pending and the work is complete, provide a standalone final result.",
       "Use background_agent_message to steer a running agent in your task subtree; wait for its delivery acknowledgement before treating the message as received.",
-      "Monitor a background agent's session after an overrun notification or other concrete evidence of a stall; follow up until it completes or needs intervention."
+      "After a check-in, use background_task to inspect the task and schedule another check-in if needed. Continue following up until it finishes or needs intervention."
     ],
     parameters: Type.Object({
       task: Type.String({ description: "Task for the background Pi agent" }),
@@ -546,7 +500,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       const agent: AgentSession = { ...task, kind: "agent", model, thinking, expectedCompletionAt }
       agentsCache.push(agent)
       pi.events.emit(BACKGROUND_TASK_CREATED, task)
-      scheduleDeadline(statusFile, expectedCompletionAt)
+      await taskCheckIns.schedule(statusFile, expectedCompletionAt)
       monitor(agent)
 
       return {

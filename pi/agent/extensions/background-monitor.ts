@@ -1,9 +1,11 @@
-import { readFile } from "node:fs/promises"
+import { readFile, stat } from "node:fs/promises"
+import { dirname } from "node:path"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 import { BACKGROUND_ACTIVITY_FINISHED, BACKGROUND_ACTIVITY_STARTED, type BackgroundActivity } from "./lib/background-activity.ts"
 import { BACKGROUND_TASK_CREATED, BACKGROUND_TASK_REMOVED, BACKGROUND_TASK_STATUS_CHANGED, BackgroundTasks, safeTaskLabel, type BackgroundTask } from "./lib/background-task.ts"
 import { FAMILY_ENTRY, familyForContext, familyTaskParent, type TaskFamily } from "./lib/background-family.ts"
+import { taskCheckIns } from "./lib/task-check-in.ts"
 
 const MAX_OUTPUT_CHARS = 50_000
 const POLL_MS = 100
@@ -114,6 +116,8 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
   }
 
   const stopMonitoring = (id: string, finishActivity = true) => {
+    const task = taskCache.find((item) => item.id === id)
+    if (task) taskCheckIns.stop(task.statusFile)
     const timer = timers.get(id)
     if (timer) clearInterval(timer)
     timers.delete(id)
@@ -124,6 +128,15 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
 
   const monitor = (task: BackgroundTask, ctx: ExtensionContext) => {
     if (timers.has(task.id)) return
+    void taskCheckIns.watch(task.statusFile, async () => {
+      if (shuttingDown || removedTasks.has(task.id) || await tasks.completion(task)) return
+      const current = (await tasks.list({ subtreeRootId: task.parentId ?? task.id })).find((candidate) => candidate.id === task.id)
+      if (!current || current.status !== "running") return
+      const output = task.outputFile ? await readFile(task.outputFile, "utf8").catch(() => "") : ""
+      const started = await stat(dirname(task.statusFile)).catch(() => undefined)
+      const elapsed = started ? `${Math.floor((Date.now() - started.birthtimeMs) / 60_000)} minutes` : "unknown"
+      pi.sendMessage({ customType: "background-monitor-check-in", content: `Background monitor ${task.id} (${task.label}) is still running after ${elapsed}.\nRecent output:\n${output.slice(-4000).trim() || "(no output)"}\nUse background_task to inspect it or schedule another check-in.`, display: true }, { deliverAs: "followUp", triggerTurn: true })
+    })
     const activity = { id: `background-monitor:${task.id}`, source: "background_monitor", label: task.label }
     activities.set(task.id, activity)
     pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
@@ -180,6 +193,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
   })
 
   pi.on("session_tree", async (_event, ctx) => {
+    for (const task of taskCache) if (task.kind === "monitor") taskCheckIns.stop(task.statusFile)
     for (const timer of timers.values()) clearInterval(timer)
     timers.clear()
     for (const activity of activities.values()) pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
@@ -203,10 +217,10 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
   pi.registerTool({
     name: "background_monitor",
     label: "Background monitor",
-    description: "Run a slow, finite shell command asynchronously in an inspectable tmux task. On exit, wake the agent with status and bounded output.",
+    description: "Run a slow, finite shell command asynchronously in an inspectable tmux task. Wake the parent at the expected duration if still running, and on exit with status and bounded output.",
     promptSnippet: "Run slow, finite shell commands asynchronously in inspectable tmux tasks",
-    promptGuidelines: ["Monitor slow, finite commands requiring follow-up with background_monitor.", "Keep monitor output visible in its tmux pane; the tool already captures pane output. If you also need a separate log, use set -o pipefail; command 2>&1 | tee /path/to/log.", "Run short commands requiring immediate results with bash."],
-    parameters: Type.Object({ command: Type.String({ description: "Slow, finite shell command to run asynchronously until it exits" }), label: Type.Optional(Type.String({ description: "Short description shown on completion" })) }),
+    promptGuidelines: ["Monitor slow, finite commands requiring follow-up with background_monitor.", "After a check-in, use background_task to inspect the task and schedule another check-in if needed.", "Keep monitor output visible in its tmux pane; the tool already captures pane output. If you also need a separate log, use set -o pipefail; command 2>&1 | tee /path/to/log.", "Run short commands requiring immediate results with bash."],
+    parameters: Type.Object({ command: Type.String({ description: "Slow, finite shell command to run asynchronously until it exits" }), label: Type.Optional(Type.String({ description: "Short description shown on completion" })), expectedRunningMinutes: Type.Number({ minimum: 1, description: "Minutes until the parent agent receives a check-in if the command is still running" }) }),
     async execute(_id, params, _signal, _update, ctx) {
       if (!(await tasks.available())) throw new Error("background_monitor requires tmux on PATH")
       const label = params.label?.trim() || params.command
@@ -216,12 +230,53 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       catch (error) { throw new Error(`background_monitor failed to start tmux task: ${error instanceof Error ? error.message : String(error)}`) }
       taskCache.push(task)
       pi.events.emit(BACKGROUND_TASK_CREATED, task)
+      await taskCheckIns.schedule(task.statusFile, Date.now() + params.expectedRunningMinutes * 60_000)
       monitor(task, ctx)
       const attach = process.env.TMUX ? `/task attach ${task.id}` : `tmux attach -t ${task.target}`
-      return { content: [{ type: "text", text: `Started background monitor: ${label}\nTask: ${task.id}\nTmux target: ${task.target}\nAttach with: ${attach}` }], details: { id: task.id, label, target: task.target, statusFile: task.statusFile } }
+      return { content: [{ type: "text", text: `Started background monitor: ${label}\nTask: ${task.id}\nExpected running time: ${params.expectedRunningMinutes} minutes\nTmux target: ${task.target}\nAttach with: ${attach}` }], details: { id: task.id, label, target: task.target, statusFile: task.statusFile } }
     },
   })
 
+  pi.registerTool({
+    name: "background_task",
+    label: "Background task",
+    description: "List, inspect, schedule another check-in for, or terminate a task in your subtree.",
+    parameters: Type.Object({
+      action: Type.Union([Type.Literal("list"), Type.Literal("inspect"), Type.Literal("check-in"), Type.Literal("terminate")]),
+      id: Type.Optional(Type.String()),
+      afterMinutes: Type.Optional(Type.Number({ minimum: 1 })),
+    }),
+    async execute(_id, params, _signal, _update, ctx) {
+      if (!family) await restoreFamily("startup", ctx)
+      const visible = await tasks.list({ subtreeRootId: scope() })
+      if (params.action === "list") {
+        const lines = visible.map((task) => `${task.id}  ${task.kind}  ${task.status}  ${task.label}`)
+        return { content: [{ type: "text" as const, text: lines.join("\n") || "No background tasks in this subtree." }], details: { status: "listed" } }
+      }
+      if (!params.id) return { content: [{ type: "text" as const, text: "Task ID is required." }], details: { status: "error" } }
+      const task = visible.find((candidate) => candidate.id === params.id)
+      if (!task) {
+        const elsewhere = (await tasks.list({ familyId: family!.familyId })).some((candidate) => candidate.id === params.id)
+        return { content: [{ type: "text" as const, text: elsewhere ? "Task is outside your subtree." : "Task not found. Use background_task with action list to see available tasks." }], details: { status: elsewhere ? "out_of_scope" : "not_found" } }
+      }
+      if (params.action === "inspect") {
+        let output = ""
+        if (task.outputFile) output = await readFile(task.outputFile, "utf8").catch(() => "")
+        const completion = await tasks.completion(task)
+        const status = completion ? "status" in completion ? completion.status : completion.kind === "exit" ? "failed" : "succeeded" : task.status
+        return { content: [{ type: "text" as const, text: `${task.kind} ${task.id} (${task.label}): ${status}\nRecent output:\n${output.slice(-4000).trim() || "(no output)"}` }], details: { status } }
+      }
+      if (task.status !== "running" || await tasks.completion(task)) return { content: [{ type: "text" as const, text: `Task ${task.id} is no longer running.` }], details: { status: "not_running" } }
+      if (params.action === "terminate") {
+        await terminateTask(task, "Terminated by parent agent")
+        return { content: [{ type: "text" as const, text: `Terminated task ${task.id}.` }], details: { status: "terminated" } }
+      }
+      if (task.parentId !== family!.nodeId) return { content: [{ type: "text" as const, text: "Only the agent that spawned this task can schedule its check-ins." }], details: { status: "out_of_scope" } }
+      if (!params.afterMinutes) return { content: [{ type: "text" as const, text: "afterMinutes is required to schedule a check-in." }], details: { status: "error" } }
+      await taskCheckIns.schedule(task.statusFile, Date.now() + params.afterMinutes * 60_000)
+      return { content: [{ type: "text" as const, text: `Scheduled a check-in for ${task.id} in ${params.afterMinutes} minutes.` }], details: { status: "scheduled" } }
+    },
+  })
 
   const terminateTask = async (selected: BackgroundTask, reason?: string): Promise<void> => {
     for (const task of await tasks.terminate(selected, reason)) pi.events.emit(BACKGROUND_TASK_STATUS_CHANGED, task)
@@ -279,6 +334,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     if (shutdown) return shutdown
     shutdown = (async () => {
       shuttingDown = true
+      for (const task of taskCache) if (task.kind === "monitor") taskCheckIns.stop(task.statusFile)
       for (const timer of timers.values()) clearInterval(timer)
       timers.clear()
       await Promise.allSettled([...consumers])

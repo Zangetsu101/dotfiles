@@ -5,6 +5,7 @@ import backgroundAgentExtension from "../extensions/background-agent.ts"
 import backgroundMonitorExtension from "../extensions/background-monitor.ts"
 import { formatRunningTasks } from "../extensions/background-task-status.ts"
 import { BackgroundTasks } from "../extensions/lib/background-task.ts"
+import { taskCheckIns } from "../extensions/lib/task-check-in.ts"
 import { FakePiRuntime, FakeTmuxProcessAdapter } from "./support/background-task-runtime.ts"
 
 const family = { familyId: "family-one", familyName: "dotfiles", rootId: "root-one", rootPane: "%root", cwd: "/repo", command: "/bin/sh", args: ["-c", "true"] }
@@ -71,6 +72,80 @@ test("messages cannot address other task families or settled agents", async () =
   await tmux.complete(agent.details.target, "completed", "done")
   assert.equal((await parent.execute("background_agent_message", { id: agent.details.id, message: "too late" })).details.status, "not_running")
   await parent.emit("session_shutdown")
+}))
+
+test("the parent can inspect, reschedule, and terminate its monitor by ID", async () => withTmuxEnvironment(async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+  const runtime = new FakePiRuntime({ sessionId: "control" })
+  backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5 }); await runtime.emit("session_start", { reason: "startup" })
+  try {
+    const monitor = await runtime.execute("background_monitor", { command: "build", expectedRunningMinutes: 1 })
+    const id = monitor.details.id
+    const list = await runtime.execute("background_task", { action: "list" })
+    assert.match(list.content[0].text, new RegExp(id))
+    const inspect = await runtime.execute("background_task", { action: "inspect", id })
+    assert.match(inspect.content[0].text, /running/)
+    const recheck = await runtime.execute("background_task", { action: "check-in", id, afterMinutes: 2 })
+    assert.equal(recheck.details.status, "scheduled")
+    const unknown = await runtime.execute("background_task", { action: "inspect", id: "mun?" })
+    assert.equal(unknown.details.status, "not_found")
+    const foreign = await tasks.create({ ...family, familyId: "family:control", rootId: "root:control", kind: "monitor", label: "sibling", parentId: "other-node" })
+    assert.equal((await runtime.execute("background_task", { action: "inspect", id: foreign.id })).details.status, "out_of_scope")
+    const terminate = await runtime.execute("background_task", { action: "terminate", id })
+    assert.equal(terminate.details.status, "terminated")
+  } finally { await runtime.emit("session_shutdown", { reason: "reload" }) }
+}))
+
+test("a running monitor checks in once and the parent can request another check-in", async () => withTmuxEnvironment(async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+  const runtime = new FakePiRuntime({ sessionId: "check-in" })
+  backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5 }); await runtime.emit("session_start", { reason: "startup" })
+  try {
+    const monitor = await runtime.execute("background_monitor", { command: "sleep 10", expectedRunningMinutes: 1 })
+    await taskCheckIns.schedule(monitor.details.statusFile, Date.now() + 20)
+    await waitFor(() => runtime.messages.some((message) => message.customType === "background-monitor-check-in"))
+    assert.match(runtime.messages[0]!.content, new RegExp(monitor.details.id))
+    await new Promise((resolve) => setTimeout(resolve, 35))
+    assert.equal(runtime.messages.length, 1)
+    const result = await runtime.execute("background_task", { action: "check-in", id: monitor.details.id, afterMinutes: 1 })
+    assert.equal(result.details.status, "scheduled")
+    await taskCheckIns.schedule(monitor.details.statusFile, Date.now() + 20)
+    await waitFor(() => runtime.messages.length === 2)
+  } finally { await runtime.emit("session_shutdown", { reason: "reload" }) }
+}))
+
+test("a monitor check-in survives a parent session reload", async () => withTmuxEnvironment(async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+  const first = new FakePiRuntime({ sessionId: "check-in-resume" })
+  backgroundMonitorExtension(first.pi, { tasks, pollMs: 5 }); await first.emit("session_start", { reason: "startup" })
+  const monitor = await first.execute("background_monitor", { command: "sleep 10", expectedRunningMinutes: 1 })
+  const persisted = [...first.entries]
+  await first.emit("session_shutdown", { reason: "reload" })
+  const resumed = new FakePiRuntime({ sessionId: "check-in-resume", entries: persisted })
+  backgroundMonitorExtension(resumed.pi, { tasks: new BackgroundTasks(tmux), pollMs: 5 })
+  try {
+    await taskCheckIns.schedule(monitor.details.statusFile, Date.now() + 20)
+    await resumed.emit("session_start", { reason: "resume" })
+    await waitFor(() => resumed.messages.some((message) => message.customType === "background-monitor-check-in"))
+    assert.match(resumed.messages[0]!.content, new RegExp(monitor.details.id))
+  } finally { await resumed.emit("session_shutdown", { reason: "reload" }) }
+}))
+
+test("an agent check-in wakes its parent and can be rearmed through the task tool", async () => withTmuxEnvironment(async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+  const runtime = new FakePiRuntime({ sessionId: "agent-check-in" })
+  backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5 })
+  await backgroundAgentExtension(runtime.pi, { tasks, tmux, pollMs: 5, millisecondsPerMinute: 10_000 })
+  await runtime.emit("session_start", { reason: "startup" })
+  try {
+    const agent = await runtime.execute("background_agent", { task: "review", expectedCompletionMinutes: 1 })
+    await taskCheckIns.schedule(agent.details.statusFile, Date.now() + 20)
+    await waitFor(() => runtime.messages.some((message) => message.customType === "background-agent-check-in"))
+    assert.match(runtime.messages[0]!.content, new RegExp(agent.details.id))
+    assert.equal((await runtime.execute("background_task", { action: "check-in", id: agent.details.id, afterMinutes: 2 })).details.status, "scheduled")
+    await taskCheckIns.schedule(agent.details.statusFile, Date.now() + 20)
+    await waitFor(() => runtime.messages.length === 2)
+  } finally { await runtime.emit("session_shutdown", { reason: "reload" }) }
 }))
 
 test("nested and current-node work shares one family session while discovery stays in the node subtree", async () => {
@@ -156,7 +231,7 @@ test("a vanished family session is recreated for new work in the same process", 
 test("agent windows and pooled monitor panes complete, remain discoverable, and attach by stable IDs", async () => withTmuxEnvironment(async () => {
   const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux); const runtime = new FakePiRuntime({ sessionId: "one" })
   backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5 }); await backgroundAgentExtension(runtime.pi, { tasks, tmux, millisecondsPerMinute: 10_000 }); await runtime.emit("session_start", { reason: "startup" })
-  const monitor = await runtime.execute("background_monitor", { command: "build", label: "build" })
+  const monitor = await runtime.execute("background_monitor", { command: "build", label: "build", expectedRunningMinutes: 1 })
   const agent = await runtime.execute("background_agent", { task: "review", label: "review", expectedCompletionMinutes: 1 })
 
   assert.match(monitor.details.target, /^%\d+$/); assert.match(agent.details.target, /^@\d+$/)
@@ -193,7 +268,7 @@ test("clean stops watching a settled agent", async () => withTmuxEnvironment(asy
 test("vanished monitor and agent targets report termination", async () => withTmuxEnvironment(async () => {
   const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux); const runtime = new FakePiRuntime({ sessionId: "vanished" })
   backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5 }); await backgroundAgentExtension(runtime.pi, { tasks, tmux, pollMs: 5 }); await runtime.emit("session_start", { reason: "startup" })
-  const monitor = await runtime.execute("background_monitor", { command: "build", label: "build" })
+  const monitor = await runtime.execute("background_monitor", { command: "build", label: "build", expectedRunningMinutes: 1 })
   const agent = await runtime.execute("background_agent", { task: "review", label: "review", expectedCompletionMinutes: 1 })
 
   await tmux.run(["kill-pane", "-t", monitor.details.target])
@@ -226,7 +301,7 @@ test("a resumed extension reclaims the family and reconnects agent and monitor c
   const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
   const first = new FakePiRuntime({ sessionId: "resume-me" })
   backgroundMonitorExtension(first.pi, { tasks, pollMs: 5 }); await backgroundAgentExtension(first.pi, { tasks, tmux, millisecondsPerMinute: 10_000 }); await first.emit("session_start", { reason: "startup" })
-  const monitor = await first.execute("background_monitor", { command: "build", label: "build" })
+  const monitor = await first.execute("background_monitor", { command: "build", label: "build", expectedRunningMinutes: 1 })
   const agent = await first.execute("background_agent", { task: "review", label: "review", expectedCompletionMinutes: 1 })
   const persisted = [...first.entries]
   await first.emit("session_shutdown", { reason: "reload" })
@@ -300,7 +375,7 @@ test("resume marks persisted running tasks interrupted when the family session d
   const first = new FakePiRuntime({ sessionId: "interrupted" })
   backgroundMonitorExtension(first.pi, { tasks: new BackgroundTasks(tmux), pollMs: 5 })
   await first.emit("session_start", { reason: "startup" })
-  await first.execute("background_monitor", { command: "build", label: "build" })
+  await first.execute("background_monitor", { command: "build", label: "build", expectedRunningMinutes: 1 })
   const persisted = [...first.entries]
   await first.emit("session_shutdown", { reason: "reload" })
   await tmux.run(["kill-session", "-t", tmux.familySessions()[0]!.id])

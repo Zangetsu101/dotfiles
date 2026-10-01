@@ -87,7 +87,7 @@ test("a child agent waits for nested background monitors before reporting comple
 
     const fastTask = await monitor.execute(
       "fast-monitor-call",
-      { command: "sleep 0.1; printf fast-finished", label: "fast nested research" },
+      { command: "sleep 0.1; printf fast-finished", label: "fast nested research", expectedRunningMinutes: 1 },
       undefined,
       undefined,
       ctx,
@@ -95,7 +95,7 @@ test("a child agent waits for nested background monitors before reporting comple
     taskTargets.push(fastTask.details.target)
     const slowTask = await monitor.execute(
       "slow-monitor-call",
-      { command: "sleep 0.4; printf slow-finished", label: "slow nested research" },
+      { command: "sleep 0.4; printf slow-finished", label: "slow nested research", expectedRunningMinutes: 1 },
       undefined,
       undefined,
       ctx,
