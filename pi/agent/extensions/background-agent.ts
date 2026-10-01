@@ -453,7 +453,8 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       if (!family) await restoreFamily("startup", ctx)
       const agent = (await listAgents(tasks, tmux, family!.nodeId)).find((item) => item.id === params.id)
       if (!params.message.trim()) return { content: [{ type: "text" as const, text: "Message must not be empty" }], details: { status: "error" } }
-      if (!agent || agent.status !== "running" || await tasks.completion(agent)) return { content: [{ type: "text" as const, text: "Agent is not running in this task subtree" }], details: { status: "not_running" } }
+      if (!agent) return { content: [{ type: "text" as const, text: "Agent not found in this task subtree. Check the agent ID from the background_agent result." }], details: { status: "not_found" } }
+      if (agent.status !== "running" || await tasks.completion(agent)) return { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { status: "not_running" } }
       const mailbox = `${agent.statusFile}.messages`
       const id = randomUUID()
       const request = join(mailbox, `${id}.request`)
@@ -552,7 +553,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         content: [
           {
             type: "text",
-            text: `Started background agent: ${label}\nModel: ${model} (${thinking})\nExpected completion: ${params.expectedCompletionMinutes} minutes`,
+            text: `Started background agent: ${label}\nAgent ID: ${id}\nModel: ${model} (${thinking})\nExpected completion: ${params.expectedCompletionMinutes} minutes`,
           },
         ],
         details: { id, label, target, statusFile, expectedCompletionAt },
