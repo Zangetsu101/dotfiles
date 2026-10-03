@@ -19,4 +19,4 @@ Report:
 2. Behavior introduced by the diff that the spec did not request (scope creep).
 3. Requirements that appear implemented but whose implementation is incorrect.
 
-Quote the relevant spec line for every finding and identify the corresponding file and hunk. Account for every requirement and every material changed behavior before finishing. Return only the report, under 400 words.
+Quote the relevant spec line for every finding and identify the corresponding file and hunk. Return only the report, under 400 words.

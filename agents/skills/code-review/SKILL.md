@@ -9,8 +9,6 @@ Review the diff between `HEAD` and a user-supplied fixed point on two independen
 - **Standards**: conformity with documented repository standards and the review baseline.
 - **Spec**: fidelity to the originating issue or spec.
 
-Run both reviews in parallel sub-agents, then report them separately.
-
 The issue tracker should have been provided to you. If `docs/agents/issue-tracker.md` is missing, tell the user to run `/setup-matt-pocock-skills`.
 
 ## Process
@@ -57,14 +55,10 @@ Spec reviewer prompt:
 
 > You are the Spec reviewer. Carry out this review directly. Read `<absolute-spec-review-path>` and follow it. Use diff command `<diff-command>` and commit-list command `<commit-command>`. The originating spec is at `<path>` / has these fetched contents: `<contents>`.
 
-Each prompt must explicitly assign the reviewer role and instruct that reviewer to read its review file. Dispatch both at once so their contexts remain independent.
+Dispatch both at once so their contexts remain independent.
 
 ### 5. Aggregate
 
 Present the returned reports under `## Standards` and `## Spec`, verbatim or lightly cleaned. Keep their findings separate and preserve their internal ordering.
 
 End with one line giving the finding count and worst issue within each axis, if any. Do not select a winner across axes.
-
-## Why two axes
-
-A change can satisfy every standard while implementing the wrong behavior, or implement the requested behavior while violating repository conventions. Separate reports keep either axis from masking the other.

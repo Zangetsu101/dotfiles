@@ -30,7 +30,7 @@ Treat every smell as a labelled judgement call, never a hard violation. Match ea
 
 ## Comment baseline
 
-Review every comment and suppression touched by the diff. Treat findings as judgement calls unless a repository standard makes them hard violations.
+Treat comment and suppression findings as judgement calls unless a repository standard makes them hard violations.
 
 - **Narration**: the comment restates the code. → Delete it.
 - **Our-code surprise**: the comment explains surprising behavior in code the team controls. → Rename, extract, type, or restructure until the code expresses it.
