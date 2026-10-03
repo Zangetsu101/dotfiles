@@ -3,10 +3,12 @@ import { EventEmitter } from "node:events"
 import test from "node:test"
 import backgroundAgentExtension from "../extensions/background-agent.ts"
 
-test("background agents are available through depth one and unavailable at depth two", async () => {
+for (const maxDepth of [1, 3]) test(`background agents respect a configured maximum depth of ${maxDepth}`, async () => {
   const previousAgentStatus = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
   const previousDepth = process.env.PI_BACKGROUND_AGENT_DEPTH
+  const previousMaxDepth = process.env.PI_BACKGROUND_AGENT_MAX_DEPTH
   const previousTmuxPane = process.env.TMUX_PANE
+  process.env.PI_BACKGROUND_AGENT_MAX_DEPTH = String(maxDepth)
   process.env.TMUX_PANE = "%isolated-depth-test"
   const registeredAtDepth = async (depth: string) => {
     process.env.PI_BACKGROUND_AGENT_STATUS_FILE = `/tmp/depth-${depth}`
@@ -21,13 +23,16 @@ test("background agents are available through depth one and unavailable at depth
   }
 
   try {
-    assert.deepEqual(await registeredAtDepth("1"), ["background_agent_message", "background_agent"]) 
-    assert.deepEqual(await registeredAtDepth("2"), [])
+    assert.deepEqual(await registeredAtDepth(String(maxDepth - 1)), ["background_agent_message", "background_agent"])
+    assert.deepEqual(await registeredAtDepth(String(maxDepth)), [])
+    assert.deepEqual(await registeredAtDepth(String(maxDepth + 1)), [])
   } finally {
     if (previousAgentStatus === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
     else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousAgentStatus
     if (previousDepth === undefined) delete process.env.PI_BACKGROUND_AGENT_DEPTH
     else process.env.PI_BACKGROUND_AGENT_DEPTH = previousDepth
+    if (previousMaxDepth === undefined) delete process.env.PI_BACKGROUND_AGENT_MAX_DEPTH
+    else process.env.PI_BACKGROUND_AGENT_MAX_DEPTH = previousMaxDepth
     if (previousTmuxPane === undefined) delete process.env.TMUX_PANE
     else process.env.TMUX_PANE = previousTmuxPane
   }

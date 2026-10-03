@@ -6,5 +6,6 @@
   "packages": [
     "npm:pi-vim"
   ],
-  "theme": "dark"
+  "theme": "dark",
+  "tuiMode": "regular"
 }
