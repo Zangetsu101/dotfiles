@@ -39,7 +39,11 @@ If the user confirms no spec exists, skip the Spec reviewer and report `no spec 
 
 ### 3. Identify standards sources
 
-Find repository documents that govern the changed code, such as `CODING_STANDARDS.md`, or `CONTRIBUTING.md`. Record their paths; the Standards reviewer will read them.
+Check `~/.agents/CODING_STANDARDS.md` for global coding standards. Include it if present.
+
+Find repository documents that govern the changed code, such as `CODING_STANDARDS.md` or `CONTRIBUTING.md`.
+
+Record each source's absolute path and scope for the Standards reviewer.
 
 ### 4. Dispatch both reviewers in parallel
 
@@ -47,7 +51,7 @@ Resolve `standards-review.md` and `spec-review.md` relative to this skill's dire
 
 Standards reviewer prompt:
 
-> You are the Standards reviewer. Carry out this review directly. Read `<absolute-standards-review-path>` and follow it. Use diff command `<diff-command>` and commit-list command `<commit-command>`. The repository standards sources are: `<paths, or "none found">`.
+> You are the Standards reviewer. Carry out this review directly. Read `<absolute-standards-review-path>` and follow it. Use diff command `<diff-command>` and commit-list command `<commit-command>`. The standards sources and their scopes are: `<absolute paths and scopes, or "none found">`.
 
 Spec reviewer prompt:
 

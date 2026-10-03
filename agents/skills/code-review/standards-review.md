@@ -7,9 +7,9 @@ You are the Standards reviewer. Review the supplied diff directly against the re
 The caller supplies:
 
 - the full diff command and commit-list command;
-- the standards-source paths found in the repository.
+- the absolute standards-source paths and their scopes, including global standards and applicable repository instructions.
 
-Read every supplied standards source, then inspect the complete diff. Repository standards override these baselines. Skip checks already enforced by tooling.
+Read every supplied standards source, then inspect the complete diff. Apply each rule only within its scope. Documented standards override these baselines; repository rules override global standards; narrower directory rules override broader rules within their scope. Skip checks already enforced by tooling.
 
 ## Smell baseline
 
