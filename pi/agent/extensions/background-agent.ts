@@ -98,6 +98,8 @@ type BackgroundAgentOptions = {
   tasks?: BackgroundTasks
   tmux?: TmuxProcessAdapter
   millisecondsPerMinute?: number
+  checkIns?: typeof taskCheckIns
+  now?: () => number
   pollMs?: number
   settledPollMs?: number
 }
@@ -241,6 +243,8 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   const tasks = options.tasks ?? new BackgroundTasks(options.tmux ?? systemTmux)
   const tmux = options.tmux ?? directTmux
   const millisecondsPerMinute = options.millisecondsPerMinute ?? 60_000
+  const checkIns = options.checkIns ?? taskCheckIns
+  const now = options.now ?? Date.now
   const pollMs = options.pollMs ?? POLL_MS
   const settledPollMs = options.settledPollMs ?? SETTLED_POLL_MS
   const childStatusFile = process.env[STATUS_FILE_ENV]
@@ -264,7 +268,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
 
   const stopMonitoring = (id: string) => {
     const agent = agentsCache.find((item) => item.id === id)
-    if (agent) taskCheckIns.stop(agent.statusFile)
+    if (agent) checkIns.stop(agent.statusFile)
     watchers.get(id)?.close()
     watchers.delete(id)
     const timer = reconciliationTimers.get(id)
@@ -310,7 +314,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         checkingSettled = false
       }
     }
-    void taskCheckIns.watch(agent.statusFile, () => notifyRunningTask(pi, tasks, agent, () => !settled && !shuttingDown))
+    void checkIns.watch(agent.statusFile, () => notifyRunningTask(pi, tasks, agent, () => !settled && !shuttingDown))
     const consume = async () => {
       if (settled) return void checkSettled()
       if (consuming || shuttingDown) return
@@ -476,7 +480,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       const invocation = piInvocation()
       const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "default"
       const thinking = pi.getThinkingLevel()
-      const expectedCompletionAt = Date.now() + params.expectedCompletionMinutes * millisecondsPerMinute
+      const expectedCompletionAt = now() + params.expectedCompletionMinutes * millisecondsPerMinute
       const piArgs = [...invocation.args, "--name", label]
 
       if (ctx.model) piArgs.push("--model", model)
@@ -493,7 +497,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       const agent: AgentSession = { ...task, kind: "agent", model, thinking, expectedCompletionAt }
       agentsCache.push(agent)
       pi.events.emit(BACKGROUND_TASK_CREATED, task)
-      await taskCheckIns.schedule(statusFile, expectedCompletionAt)
+      await checkIns.schedule(statusFile, expectedCompletionAt)
       monitor(agent)
 
       return {

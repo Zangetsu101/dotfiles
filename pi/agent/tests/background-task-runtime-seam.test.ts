@@ -1,11 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { rm } from "node:fs/promises"
+import { rm, writeFile } from "node:fs/promises"
 import backgroundAgentExtension from "../extensions/background-agent.ts"
 import backgroundMonitorExtension from "../extensions/background-monitor.ts"
 import { formatRunningTasks } from "../extensions/background-task-status.ts"
 import { BackgroundTasks } from "../extensions/lib/background-task.ts"
-import { taskCheckIns } from "../extensions/lib/task-check-in.ts"
+import { createTaskCheckInScheduler } from "../extensions/lib/task-check-in.ts"
 import { FakePiRuntime, FakeTmuxProcessAdapter } from "./support/background-task-runtime.ts"
 
 const family = { familyId: "family-one", familyName: "dotfiles", rootId: "root-one", rootPane: "%root", cwd: "/repo", command: "/bin/sh", args: ["-c", "true"] }
@@ -96,36 +96,79 @@ test("the parent can inspect, reschedule, and terminate its monitor by ID", asyn
   } finally { await runtime.emit("session_shutdown", { reason: "reload" }) }
 }))
 
-test("a running monitor checks in once and the parent can request another check-in", async () => withTmuxEnvironment(async () => {
-  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+function controlledCheckIns() {
+  let time = 1_000
+  const timers = new Map<object, { deadline: number; callback: () => void }>()
+  const now = () => time
+  const checkIns = createTaskCheckInScheduler({
+    now,
+    setTimer(callback, delay) {
+      const token = {} as ReturnType<typeof setTimeout>
+      timers.set(token, { deadline: time + delay, callback })
+      return token
+    },
+    clearTimer(token) { timers.delete(token) },
+  })
+  return {
+    now, checkIns,
+    async ready(count = 1) { await waitFor(() => timers.size >= count) },
+    async advance(to: number) {
+      assert.ok(to >= time)
+      time = to
+      for (const [token, timer] of [...timers]) {
+        if (timer.deadline <= time) { timers.delete(token); timer.callback() }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    },
+  }
+}
+
+test("monitor check-ins respect both public tool durations at their boundaries", async () => withTmuxEnvironment(async () => {
+  const clock = controlledCheckIns(); const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
   const runtime = new FakePiRuntime({ sessionId: "check-in" })
-  backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5 }); await runtime.emit("session_start", { reason: "startup" })
+  backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5, checkIns: clock.checkIns, now: clock.now, millisecondsPerMinute: 100 })
+  await runtime.emit("session_start", { reason: "startup" })
   try {
-    const monitor = await runtime.execute("background_monitor", { command: "sleep 10", expectedRunningMinutes: 1 })
-    await taskCheckIns.schedule(monitor.details.statusFile, Date.now() + 20)
-    await waitFor(() => runtime.messages.some((message) => message.customType === "background-monitor-check-in"))
+    const monitor = await runtime.execute("background_monitor", { command: "sleep 10", expectedRunningMinutes: 2 })
+    const later = await runtime.execute("background_monitor", { command: "sleep 20", expectedRunningMinutes: 3 })
+    await clock.ready(2)
+    await clock.advance(1_199); assert.equal(runtime.messages.length, 0)
+    await clock.advance(1_200); await waitFor(() => runtime.messages.length === 1)
     assert.match(runtime.messages[0]!.content, new RegExp(monitor.details.id))
-    await new Promise((resolve) => setTimeout(resolve, 35))
-    assert.equal(runtime.messages.length, 1)
-    const result = await runtime.execute("background_task", { action: "check-in", id: monitor.details.id, afterMinutes: 1 })
+    await clock.advance(1_201); assert.equal(runtime.messages.length, 1)
+    const result = await runtime.execute("background_task", { action: "check-in", id: monitor.details.id, afterMinutes: 3 })
     assert.equal(result.details.status, "scheduled")
-    await taskCheckIns.schedule(monitor.details.statusFile, Date.now() + 20)
-    await waitFor(() => runtime.messages.length === 2)
+    await clock.advance(1_299); assert.equal(runtime.messages.length, 1)
+    await clock.advance(1_300); await waitFor(() => runtime.messages.length === 2)
+    assert.match(runtime.messages[1]!.content, new RegExp(later.details.id))
+    await clock.advance(1_301); assert.equal(runtime.messages.length, 2)
+    await clock.advance(1_500); assert.equal(runtime.messages.length, 2)
+    await clock.advance(1_501); await waitFor(() => runtime.messages.length === 3)
+    assert.match(runtime.messages[2]!.content, new RegExp(monitor.details.id))
+    await clock.advance(1_502); assert.equal(runtime.messages.length, 3)
+    assert.equal((await runtime.execute("background_task", { action: "check-in", id: later.details.id, afterMinutes: 2 })).details.status, "scheduled")
+    await clock.advance(1_701); assert.equal(runtime.messages.length, 3)
+    await clock.advance(1_702); await waitFor(() => runtime.messages.length === 4)
+    assert.match(runtime.messages[3]!.content, new RegExp(later.details.id))
+    await clock.advance(1_703); assert.equal(runtime.messages.length, 4)
   } finally { await runtime.emit("session_shutdown", { reason: "reload" }) }
 }))
 
 test("a monitor check-in survives a parent session reload", async () => withTmuxEnvironment(async () => {
   const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
   const first = new FakePiRuntime({ sessionId: "check-in-resume" })
-  backgroundMonitorExtension(first.pi, { tasks, pollMs: 5 }); await first.emit("session_start", { reason: "startup" })
-  const monitor = await first.execute("background_monitor", { command: "sleep 10", expectedRunningMinutes: 1 })
+  const clock = controlledCheckIns()
+  backgroundMonitorExtension(first.pi, { tasks, pollMs: 5, checkIns: clock.checkIns, now: clock.now, millisecondsPerMinute: 100 }); await first.emit("session_start", { reason: "startup" })
+  const monitor = await first.execute("background_monitor", { command: "sleep 10", expectedRunningMinutes: 2 })
   const persisted = [...first.entries]
   await first.emit("session_shutdown", { reason: "reload" })
   const resumed = new FakePiRuntime({ sessionId: "check-in-resume", entries: persisted })
-  backgroundMonitorExtension(resumed.pi, { tasks: new BackgroundTasks(tmux), pollMs: 5 })
+  backgroundMonitorExtension(resumed.pi, { tasks: new BackgroundTasks(tmux), pollMs: 5, checkIns: clock.checkIns, now: clock.now, millisecondsPerMinute: 100 })
   try {
-    await taskCheckIns.schedule(monitor.details.statusFile, Date.now() + 20)
     await resumed.emit("session_start", { reason: "resume" })
+    await clock.ready()
+    await clock.advance(1_199); assert.equal(resumed.messages.length, 0)
+    await clock.advance(1_200)
     await waitFor(() => resumed.messages.some((message) => message.customType === "background-monitor-check-in"))
     assert.match(resumed.messages[0]!.content, new RegExp(monitor.details.id))
   } finally { await resumed.emit("session_shutdown", { reason: "reload" }) }
@@ -134,17 +177,44 @@ test("a monitor check-in survives a parent session reload", async () => withTmux
 test("an agent check-in wakes its parent and can be rearmed through the task tool", async () => withTmuxEnvironment(async () => {
   const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
   const runtime = new FakePiRuntime({ sessionId: "agent-check-in" })
-  backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5 })
-  await backgroundAgentExtension(runtime.pi, { tasks, tmux, pollMs: 5, millisecondsPerMinute: 10_000 })
+  const clock = controlledCheckIns()
+  backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5, checkIns: clock.checkIns, now: clock.now, millisecondsPerMinute: 100 })
+  await backgroundAgentExtension(runtime.pi, { tasks, tmux, pollMs: 5, checkIns: clock.checkIns, now: clock.now, millisecondsPerMinute: 100 })
   await runtime.emit("session_start", { reason: "startup" })
   try {
-    const agent = await runtime.execute("background_agent", { task: "review", expectedCompletionMinutes: 1 })
-    await taskCheckIns.schedule(agent.details.statusFile, Date.now() + 20)
-    await waitFor(() => runtime.messages.some((message) => message.customType === "background-agent-check-in"))
+    const agent = await runtime.execute("background_agent", { task: "review", expectedCompletionMinutes: 2 })
+    await clock.ready()
+    await clock.advance(1_199); assert.equal(runtime.messages.length, 0)
+    await clock.advance(1_200); await waitFor(() => runtime.messages.length === 1)
     assert.match(runtime.messages[0]!.content, new RegExp(agent.details.id))
-    assert.equal((await runtime.execute("background_task", { action: "check-in", id: agent.details.id, afterMinutes: 2 })).details.status, "scheduled")
-    await taskCheckIns.schedule(agent.details.statusFile, Date.now() + 20)
-    await waitFor(() => runtime.messages.length === 2)
+    await clock.advance(1_201); assert.equal(runtime.messages.length, 1)
+    assert.equal((await runtime.execute("background_task", { action: "check-in", id: agent.details.id, afterMinutes: 3 })).details.status, "scheduled")
+    await clock.advance(1_500); assert.equal(runtime.messages.length, 1)
+    await clock.advance(1_501); await waitFor(() => runtime.messages.length === 2)
+    await clock.advance(1_502); assert.equal(runtime.messages.length, 2)
+  } finally { await runtime.emit("session_shutdown", { reason: "reload" }) }
+}))
+
+test("background_task inspect bounds output and preserves a UTF-8 suffix", async () => withTmuxEnvironment(async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+  const runtime = new FakePiRuntime({ sessionId: "inspect-output" })
+  backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5 })
+  await runtime.emit("session_start", { reason: "startup" })
+  try {
+    const monitor = await runtime.execute("background_monitor", { command: "build", expectedRunningMinutes: 1 })
+    const outputFile = (await tasks.resolve(monitor.details.id, { familyId: "family:inspect-output" }))!.outputFile!
+    const suffix = "known suffix"
+    const boundaryOutput = "x".repeat(16_000) + "€" + "y".repeat(3998 - suffix.length) + suffix
+    for (const output of ["short output", boundaryOutput]) {
+      await writeFile(outputFile, output)
+      const inspected = await runtime.execute("background_task", { action: "inspect", id: monitor.details.id })
+      assert.equal(inspected.details.status, "running")
+      assert.ok(inspected.content[0].text.endsWith(output === "short output" ? output : suffix))
+      if (output.length > 10_000) {
+        assert.ok(inspected.content[0].text.length < output.length, "large output is bounded")
+        assert.ok(!inspected.content[0].text.includes("�"), "UTF-8 remains valid at the tail boundary")
+      }
+    }
   } finally { await runtime.emit("session_shutdown", { reason: "reload" }) }
 }))
 

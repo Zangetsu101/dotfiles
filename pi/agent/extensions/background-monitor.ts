@@ -62,11 +62,17 @@ type BackgroundMonitorOptions = {
   tasks?: BackgroundTasks
   pollMs?: number
   subtreeRootId?: string
+  checkIns?: typeof taskCheckIns
+  now?: () => number
+  millisecondsPerMinute?: number
 }
 
 export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {}) {
   const tasks = options.tasks ?? new BackgroundTasks()
   const pollMs = options.pollMs ?? POLL_MS
+  const checkIns = options.checkIns ?? taskCheckIns
+  const now = options.now ?? Date.now
+  const millisecondsPerMinute = options.millisecondsPerMinute ?? 60_000
   const configuredSubtreeRootId = options.subtreeRootId
   const timers = new Map<string, NodeJS.Timeout>()
   const consumers = new Set<Promise<void>>()
@@ -116,7 +122,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
 
   const stopMonitoring = (id: string, finishActivity = true) => {
     const task = taskCache.find((item) => item.id === id)
-    if (task) taskCheckIns.stop(task.statusFile)
+    if (task) checkIns.stop(task.statusFile)
     const timer = timers.get(id)
     if (timer) clearInterval(timer)
     timers.delete(id)
@@ -127,7 +133,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
 
   const monitor = (task: BackgroundTask, ctx: ExtensionContext) => {
     if (timers.has(task.id)) return
-    void taskCheckIns.watch(task.statusFile, () => notifyRunningTask(pi, tasks, task, () => !shuttingDown && !removedTasks.has(task.id)))
+    void checkIns.watch(task.statusFile, () => notifyRunningTask(pi, tasks, task, () => !shuttingDown && !removedTasks.has(task.id)))
     const activity = { id: `background-monitor:${task.id}`, source: "background_monitor", label: task.label }
     activities.set(task.id, activity)
     pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
@@ -183,7 +189,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
   })
 
   pi.on("session_tree", async (_event, ctx) => {
-    for (const task of taskCache) if (task.kind === "monitor") taskCheckIns.stop(task.statusFile)
+    for (const task of taskCache) if (task.kind === "monitor") checkIns.stop(task.statusFile)
     for (const timer of timers.values()) clearInterval(timer)
     timers.clear()
     for (const activity of activities.values()) pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
@@ -220,7 +226,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       catch (error) { throw new Error(`background_monitor failed to start tmux task: ${error instanceof Error ? error.message : String(error)}`) }
       taskCache.push(task)
       pi.events.emit(BACKGROUND_TASK_CREATED, task)
-      await taskCheckIns.schedule(task.statusFile, Date.now() + params.expectedRunningMinutes * 60_000)
+      await checkIns.schedule(task.statusFile, now() + params.expectedRunningMinutes * millisecondsPerMinute)
       monitor(task, ctx)
       const attach = process.env.TMUX ? `/task attach ${task.id}` : `tmux attach -t ${task.target}`
       return { content: [{ type: "text", text: `Started background monitor: ${label}\nTask: ${task.id}\nExpected running time: ${params.expectedRunningMinutes} minutes\nTmux target: ${task.target}\nAttach with: ${attach}` }], details: { id: task.id, label, target: task.target, statusFile: task.statusFile } }
@@ -262,7 +268,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       }
       if (task.parentId !== family!.nodeId) return { content: [{ type: "text" as const, text: "Only the agent that spawned this task can schedule its check-ins." }], details: { status: "out_of_scope" } }
       if (!params.afterMinutes) return { content: [{ type: "text" as const, text: "afterMinutes is required to schedule a check-in." }], details: { status: "error" } }
-      await taskCheckIns.schedule(task.statusFile, Date.now() + params.afterMinutes * 60_000)
+      await checkIns.schedule(task.statusFile, now() + params.afterMinutes * millisecondsPerMinute)
       return { content: [{ type: "text" as const, text: `Scheduled a check-in for ${task.id} in ${params.afterMinutes} minutes.` }], details: { status: "scheduled" } }
     },
   })
@@ -323,7 +329,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     if (shutdown) return shutdown
     shutdown = (async () => {
       shuttingDown = true
-      for (const task of taskCache) if (task.kind === "monitor") taskCheckIns.stop(task.statusFile)
+      for (const task of taskCache) if (task.kind === "monitor") checkIns.stop(task.statusFile)
       for (const timer of timers.values()) clearInterval(timer)
       timers.clear()
       await Promise.allSettled([...consumers])

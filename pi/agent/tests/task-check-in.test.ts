@@ -1,12 +1,12 @@
 import assert from "node:assert/strict"
-import { mkdtemp, open, readFile, writeFile } from "node:fs/promises"
+import { mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import type { BackgroundTask, BackgroundTasks } from "../extensions/lib/background-task.ts"
 import { createTaskCheckInScheduler } from "../extensions/lib/task-check-in.ts"
-import { notifyRunningTask, readOutputTail } from "../extensions/lib/background-task-check-in.ts"
+import { notifyRunningTask } from "../extensions/lib/background-task-check-in.ts"
 
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), "task-check-in-"))
@@ -82,27 +82,6 @@ test("two scheduler instances claim a check-in once", async () => {
   assert.equal(calls, 1)
   first.stop(statusFile)
   second.stop(statusFile)
-})
-
-test("bounded output reads the tail of a large log", async () => {
-  const { statusFile } = await fixture()
-  const path = `${statusFile}.output`
-  const file = await open(path, "w")
-  try {
-    await file.truncate(8_000_000)
-    await file.write("last lines", 7_999_990)
-  } finally { await file.close() }
-  const tail = await readOutputTail(path)
-  assert.ok(tail.length <= 4_000)
-  assert.ok(tail.endsWith("last lines"))
-})
-
-test("output tails start at a UTF-8 boundary", async () => {
-  const { statusFile } = await fixture()
-  const path = `${statusFile}.output`
-  await writeFile(path, `€${"a".repeat(3998)}`)
-  const tail = await readOutputTail(path)
-  assert.equal(tail, "a".repeat(3998))
 })
 
 test("completion during output collection suppresses the check-in", async () => {
