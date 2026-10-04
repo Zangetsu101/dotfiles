@@ -1,9 +1,10 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, writeFile } from "node:fs/promises"
+import { mkdtemp, open, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 import { createTaskCheckInScheduler } from "../extensions/lib/task-check-in.ts"
+import { notifyRunningTask, readOutputTail } from "../extensions/lib/background-task-check-in.ts"
 
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), "task-check-in-"))
@@ -64,6 +65,50 @@ test("rearm supersedes an old claim and completion suppresses notification", asy
   assert.equal(calls, 2)
   await scheduler.cancel(statusFile)
   await assert.rejects(readFile(`${statusFile}.check-in`))
+})
+
+test("concurrent watchers deliver only one check-in", async () => {
+  const { statusFile, options, tick } = await fixture()
+  const first = createTaskCheckInScheduler(options)
+  const second = createTaskCheckInScheduler(options)
+  let calls = 0
+  await first.watch(statusFile, () => { calls++ })
+  await second.watch(statusFile, () => { calls++ })
+  await first.schedule(statusFile, 120)
+  await second.watch(statusFile, () => { calls++ })
+  await tick(120)
+  assert.equal(calls, 1)
+  first.stop(statusFile)
+  second.stop(statusFile)
+})
+
+test("bounded output reads the tail of a large log", async () => {
+  const { statusFile } = await fixture()
+  const path = `${statusFile}.output`
+  const file = await open(path, "w")
+  try {
+    await file.truncate(8_000_000)
+    await file.write("last lines", 7_999_990)
+  } finally { await file.close() }
+  const tail = await readOutputTail(path)
+  assert.ok(tail.length <= 4_000)
+  assert.ok(tail.endsWith("last lines"))
+})
+
+test("completion during output collection suppresses the check-in", async () => {
+  const { statusFile } = await fixture()
+  const outputFile = `${statusFile}.output`
+  await writeFile(outputFile, "progress")
+  const task = { id: "child", kind: "monitor", label: "work", status: "running", statusFile, outputFile, parentId: "root" }
+  let checks = 0
+  const tasks = {
+    async completion() { return ++checks === 2 ? { status: "completed" } : undefined },
+    async list() { return [task] },
+  }
+  const messages: unknown[] = []
+  await notifyRunningTask({ sendMessage(message: unknown) { messages.push(message) } } as any, tasks as any, task as any, () => true)
+  assert.equal(checks, 2)
+  assert.deepEqual(messages, [])
 })
 
 test("stop keeps the deadline; cancel removes it", async () => {

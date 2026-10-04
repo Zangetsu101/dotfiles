@@ -1,11 +1,10 @@
-import { readFile, stat } from "node:fs/promises"
-import { dirname } from "node:path"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 import { BACKGROUND_ACTIVITY_FINISHED, BACKGROUND_ACTIVITY_STARTED, type BackgroundActivity } from "./lib/background-activity.ts"
 import { BACKGROUND_TASK_CREATED, BACKGROUND_TASK_REMOVED, BACKGROUND_TASK_STATUS_CHANGED, BackgroundTasks, safeTaskLabel, type BackgroundTask } from "./lib/background-task.ts"
 import { FAMILY_ENTRY, familyForContext, familyTaskParent, type TaskFamily } from "./lib/background-family.ts"
 import { taskCheckIns } from "./lib/task-check-in.ts"
+import { notifyRunningTask, readOutputTail } from "./lib/background-task-check-in.ts"
 
 const MAX_OUTPUT_CHARS = 50_000
 const POLL_MS = 100
@@ -128,15 +127,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
 
   const monitor = (task: BackgroundTask, ctx: ExtensionContext) => {
     if (timers.has(task.id)) return
-    void taskCheckIns.watch(task.statusFile, async () => {
-      if (shuttingDown || removedTasks.has(task.id) || await tasks.completion(task)) return
-      const current = (await tasks.list({ subtreeRootId: task.parentId ?? task.id })).find((candidate) => candidate.id === task.id)
-      if (!current || current.status !== "running") return
-      const output = task.outputFile ? await readFile(task.outputFile, "utf8").catch(() => "") : ""
-      const started = await stat(dirname(task.statusFile)).catch(() => undefined)
-      const elapsed = started ? `${Math.floor((Date.now() - started.birthtimeMs) / 60_000)} minutes` : "unknown"
-      pi.sendMessage({ customType: "background-monitor-check-in", content: `Background monitor ${task.id} (${task.label}) is still running after ${elapsed}.\nRecent output:\n${output.slice(-4000).trim() || "(no output)"}\nUse background_task to inspect it or schedule another check-in.`, display: true }, { deliverAs: "followUp", triggerTurn: true })
-    })
+    void taskCheckIns.watch(task.statusFile, () => notifyRunningTask(pi, tasks, task, () => !shuttingDown && !removedTasks.has(task.id)))
     const activity = { id: `background-monitor:${task.id}`, source: "background_monitor", label: task.label }
     activities.set(task.id, activity)
     pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
@@ -149,8 +140,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       if (removedTasks.has(task.id)) return
       pi.events.emit(BACKGROUND_TASK_STATUS_CHANGED, task)
       pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
-      let output = ""
-      try { if (task.outputFile) output = (await readFile(task.outputFile, "utf8")).slice(-MAX_OUTPUT_CHARS) } catch {}
+      const output = await readOutputTail(task.outputFile, MAX_OUTPUT_CHARS)
       const failed = completion.status !== "completed"
       const status = completion.status === "cancelled"
         ? `was cancelled${completion.reason ? `: ${completion.reason}` : ""}`
@@ -260,11 +250,10 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
         return { content: [{ type: "text" as const, text: elsewhere ? "Task is outside your subtree." : "Task not found. Use background_task with action list to see available tasks." }], details: { status: elsewhere ? "out_of_scope" : "not_found" } }
       }
       if (params.action === "inspect") {
-        let output = ""
-        if (task.outputFile) output = await readFile(task.outputFile, "utf8").catch(() => "")
+        const output = await readOutputTail(task.outputFile)
         const completion = await tasks.completion(task)
         const status = completion ? "status" in completion ? completion.status : completion.kind === "exit" ? "failed" : "succeeded" : task.status
-        return { content: [{ type: "text" as const, text: `${task.kind} ${task.id} (${task.label}): ${status}\nRecent output:\n${output.slice(-4000).trim() || "(no output)"}` }], details: { status } }
+        return { content: [{ type: "text" as const, text: `${task.kind} ${task.id} (${task.label}): ${status}\nRecent output:\n${output.trim() || "(no output)"}` }], details: { status } }
       }
       if (task.status !== "running" || await tasks.completion(task)) return { content: [{ type: "text" as const, text: `Task ${task.id} is no longer running.` }], details: { status: "not_running" } }
       if (params.action === "terminate") {

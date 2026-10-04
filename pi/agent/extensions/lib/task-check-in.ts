@@ -53,7 +53,6 @@ export function createTaskCheckInScheduler(options: {
     const state = await read(statusFile)
     if (!state || state.id !== id) return
     if (state.deadline > now()) { arm(statusFile, state); return }
-    // Claim before calling user code. The claim remains on disk across reloads.
     try {
       const claim = await open(`${file(statusFile)}.${id}.claimed`, "wx", 0o600)
       await claim.close()

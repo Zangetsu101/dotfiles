@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { basename, dirname, join } from "node:path"
-import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises"
+import { mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { promisify } from "node:util"
 import { watch, type FSWatcher } from "node:fs"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
@@ -23,6 +23,7 @@ import {
 } from "./lib/background-task.ts"
 import { familyForContext, familyTaskParent, type TaskFamily } from "./lib/background-family.ts"
 import { taskCheckIns } from "./lib/task-check-in.ts"
+import { notifyRunningTask } from "./lib/background-task-check-in.ts"
 
 const execFileAsync = promisify(execFile)
 const STATUS_FILE_ENV = "PI_BACKGROUND_AGENT_STATUS_FILE"
@@ -309,15 +310,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         checkingSettled = false
       }
     }
-    void taskCheckIns.watch(agent.statusFile, async () => {
-      if (settled || shuttingDown || await tasks.completion(agent)) return
-      const current = (await listAgents(tasks, tmux, agent.parentId ?? agent.id)).find((candidate) => candidate.id === agent.id)
-      if (!current || current.status !== "running") return
-      const output = agent.outputFile ? await readFile(agent.outputFile, "utf8").catch(() => "") : ""
-      const started = await stat(dirname(agent.statusFile)).catch(() => undefined)
-      const elapsed = started ? `${Math.floor((Date.now() - started.birthtimeMs) / 60_000)} minutes` : "unknown"
-      pi.sendMessage({ customType: "background-agent-check-in", content: `Background agent ${agent.id} (${agent.label}) is still running after ${elapsed}.\nRecent output:\n${output.slice(-4000).trim() || "(no output)"}\nUse background_task to inspect it or schedule another check-in.`, display: true }, { deliverAs: "followUp", triggerTurn: true })
-    })
+    void taskCheckIns.watch(agent.statusFile, () => notifyRunningTask(pi, tasks, agent, () => !settled && !shuttingDown))
     const consume = async () => {
       if (settled) return void checkSettled()
       if (consuming || shuttingDown) return
