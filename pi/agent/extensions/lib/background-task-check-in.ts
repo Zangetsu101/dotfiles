@@ -18,13 +18,15 @@ export async function readOutputTail(path: string | undefined, maxBytes = OUTPUT
     const length = Math.min(size, maxBytes)
     const buffer = Buffer.alloc(length)
     const { bytesRead } = await file.read(buffer, 0, length, size - length)
-    return buffer.toString("utf8", 0, bytesRead)
+    let start = 0
+    if (size > length) while (start < bytesRead && (buffer[start]! & 0xc0) === 0x80) start++
+    return buffer.toString("utf8", start, bytesRead)
   } finally { await file.close() }
 }
 
 export async function notifyRunningTask(
-  pi: ExtensionAPI,
-  tasks: BackgroundTasks,
+  pi: Pick<ExtensionAPI, "sendMessage">,
+  tasks: Pick<BackgroundTasks, "completion" | "list">,
   task: BackgroundTask,
   active: () => boolean,
 ): Promise<void> {

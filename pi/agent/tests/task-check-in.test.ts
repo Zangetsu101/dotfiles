@@ -3,6 +3,8 @@ import { mkdtemp, open, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import type { BackgroundTask, BackgroundTasks } from "../extensions/lib/background-task.ts"
 import { createTaskCheckInScheduler } from "../extensions/lib/task-check-in.ts"
 import { notifyRunningTask, readOutputTail } from "../extensions/lib/background-task-check-in.ts"
 
@@ -67,7 +69,7 @@ test("rearm supersedes an old claim and completion suppresses notification", asy
   await assert.rejects(readFile(`${statusFile}.check-in`))
 })
 
-test("concurrent watchers deliver only one check-in", async () => {
+test("two scheduler instances claim a check-in once", async () => {
   const { statusFile, options, tick } = await fixture()
   const first = createTaskCheckInScheduler(options)
   const second = createTaskCheckInScheduler(options)
@@ -95,18 +97,27 @@ test("bounded output reads the tail of a large log", async () => {
   assert.ok(tail.endsWith("last lines"))
 })
 
+test("output tails start at a UTF-8 boundary", async () => {
+  const { statusFile } = await fixture()
+  const path = `${statusFile}.output`
+  await writeFile(path, `€${"a".repeat(3998)}`)
+  const tail = await readOutputTail(path)
+  assert.equal(tail, "a".repeat(3998))
+})
+
 test("completion during output collection suppresses the check-in", async () => {
   const { statusFile } = await fixture()
   const outputFile = `${statusFile}.output`
   await writeFile(outputFile, "progress")
-  const task = { id: "child", kind: "monitor", label: "work", status: "running", statusFile, outputFile, parentId: "root" }
+  const task: BackgroundTask = { id: "child", kind: "monitor", label: "work", status: "running", statusFile, outputFile, parentId: "root", parent: "root", target: "%child", cwd: "/tmp" }
   let checks = 0
-  const tasks = {
+  const tasks: Pick<BackgroundTasks, "completion" | "list"> = {
     async completion() { return ++checks === 2 ? { status: "completed" } : undefined },
     async list() { return [task] },
   }
-  const messages: unknown[] = []
-  await notifyRunningTask({ sendMessage(message: unknown) { messages.push(message) } } as any, tasks as any, task as any, () => true)
+  const messages: Parameters<ExtensionAPI["sendMessage"]>[0][] = []
+  const pi: Pick<ExtensionAPI, "sendMessage"> = { sendMessage(message) { messages.push(message) } }
+  await notifyRunningTask(pi, tasks, task, () => true)
   assert.equal(checks, 2)
   assert.deepEqual(messages, [])
 })
