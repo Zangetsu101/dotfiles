@@ -163,6 +163,7 @@ test("a monitor check-in survives a parent session reload", async () => withTmux
   const monitor = await first.execute("background_monitor", { command: "sleep 10", expectedRunningMinutes: 2 })
   const persisted = [...first.entries]
   await first.emit("session_shutdown", { reason: "reload" })
+  await tmux.run(["set-option", "-p", "-t", monitor.details.target, "@pi_task_started_at", String(Date.now() - 150_000)])
   const resumed = new FakePiRuntime({ sessionId: "check-in-resume", entries: persisted })
   backgroundMonitorExtension(resumed.pi, { tasks: new BackgroundTasks(tmux), pollMs: 5, ...clock.options })
   try {
@@ -170,6 +171,40 @@ test("a monitor check-in survives a parent session reload", async () => withTmux
     await clock.ready()
     await clock.advance(1_199); assert.equal(resumed.messages.length, 0)
     await clock.advance(1_200)
+    await waitFor(() => resumed.messages.some((message) => message.customType === "background-monitor-check-in"))
+    assert.match(resumed.messages[0]!.content, new RegExp(monitor.details.id))
+    assert.match(resumed.messages[0]!.content, /status: running; elapsed: 2 minutes/)
+  } finally { await resumed.emit("session_shutdown", { reason: "reload" }) }
+}))
+
+test("a suppressed running check-in reaches the parent after reload", async () => withTmuxEnvironment(async () => {
+  const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+  const clock = controlledCheckIns()
+  const first = new FakePiRuntime({ sessionId: "suppressed-check-in" })
+  backgroundMonitorExtension(first.pi, { tasks, pollMs: 10_000, ...clock.options })
+  await first.emit("session_start", { reason: "startup" })
+  const monitor = await first.execute("background_monitor", { command: "sleep 10", expectedRunningMinutes: 2 })
+  const completion = tasks.completion.bind(tasks)
+  let suppressOnce = true
+  tasks.completion = async (task) => {
+    if (task.statusFile === monitor.details.statusFile && suppressOnce) {
+      suppressOnce = false
+      return { status: "completed" }
+    }
+    return completion(task)
+  }
+  await clock.ready()
+  await clock.advance(1_200)
+  assert.equal(first.messages.length, 0)
+  assert.equal(suppressOnce, false)
+  const persisted = [...first.entries]
+  await first.emit("session_shutdown", { reason: "reload" })
+  const resumed = new FakePiRuntime({ sessionId: "suppressed-check-in", entries: persisted })
+  backgroundMonitorExtension(resumed.pi, { tasks: new BackgroundTasks(tmux), pollMs: 10_000, ...clock.options })
+  try {
+    await resumed.emit("session_start", { reason: "resume" })
+    await clock.ready()
+    await clock.advance(1_201)
     await waitFor(() => resumed.messages.some((message) => message.customType === "background-monitor-check-in"))
     assert.match(resumed.messages[0]!.content, new RegExp(monitor.details.id))
   } finally { await resumed.emit("session_shutdown", { reason: "reload" }) }
