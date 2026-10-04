@@ -9,7 +9,11 @@ The caller supplies:
 - the full diff command and commit-list command;
 - the absolute standards-source paths and their scopes, including global standards and applicable repository instructions.
 
-Read every supplied standards source, then inspect the complete diff. Apply each rule only within its scope. Documented standards override these baselines; repository rules override global standards; narrower directory rules override broader rules within their scope. Skip checks already enforced by tooling.
+Read every supplied standards source, then inspect the complete diff and every commit in the supplied range. Apply each rule only within its scope. Documented standards override these baselines; repository rules override global standards; narrower directory rules override broader rules within their scope. Skip checks already enforced by tooling.
+
+## Commit-message baseline
+
+Treat message-quality findings as judgement calls. Each commit message should concisely explain the feature, fix, or purpose of the change. Flag messages that substitute an inventory of implementation details for that explanation. Keep implementation details when they help explain the change's purpose.
 
 ## Smell baseline
 
@@ -45,8 +49,9 @@ An explanation of intent alone does not justify a comment. Identify the external
 
 Report, by file and hunk where relevant:
 
-1. Every documented-standard violation, citing the standards file and rule.
-2. Every baseline smell found, naming the smell and quoting the hunk.
-3. Every touched comment or suppression that fails the baseline, quoting it and prescribing deletion, code reshaping, executable enforcement, or preservation.
+1. Every documented-standard violation, citing the standards file and rule. Identify commit-message violations by commit hash and subject.
+2. Every commit-message quality finding, citing the commit hash and subject and suggesting a concise replacement.
+3. Every baseline smell found, naming the smell and quoting the hunk.
+4. Every touched comment or suppression that fails the baseline, quoting it and prescribing deletion, code reshaping, executable enforcement, or preservation.
 
-Separate hard violations from judgement calls. Account for every changed hunk and every touched comment or suppression before finishing. Return only the report, under 400 words.
+Separate hard violations from judgement calls. Account for every commit, every changed hunk, and every touched comment or suppression before finishing. Return only the report, under 400 words.

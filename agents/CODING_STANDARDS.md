@@ -1,5 +1,9 @@
 # Coding standards
 
+## Commit messages
+
+- Use Conventional Commits.
+
 ## Behavioral tests
 
 - Test observable behavior through public interfaces, with expected outcomes specified independently of implementation constants or logic.
