@@ -110,7 +110,7 @@ function controlledCheckIns() {
     clearTimer(token) { timers.delete(token) },
   })
   return {
-    now, checkIns,
+    options: { checkIns, now, millisecondsPerMinute: 100 },
     async ready(count = 1) { await waitFor(() => timers.size >= count) },
     async advance(to: number) {
       assert.ok(to >= time)
@@ -126,7 +126,7 @@ function controlledCheckIns() {
 test("monitor check-ins respect both public tool durations at their boundaries", async () => withTmuxEnvironment(async () => {
   const clock = controlledCheckIns(); const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
   const runtime = new FakePiRuntime({ sessionId: "check-in" })
-  backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5, checkIns: clock.checkIns, now: clock.now, millisecondsPerMinute: 100 })
+  backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5, ...clock.options })
   await runtime.emit("session_start", { reason: "startup" })
   try {
     const monitor = await runtime.execute("background_monitor", { command: "sleep 10", expectedRunningMinutes: 2 })
@@ -158,12 +158,12 @@ test("a monitor check-in survives a parent session reload", async () => withTmux
   const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
   const first = new FakePiRuntime({ sessionId: "check-in-resume" })
   const clock = controlledCheckIns()
-  backgroundMonitorExtension(first.pi, { tasks, pollMs: 5, checkIns: clock.checkIns, now: clock.now, millisecondsPerMinute: 100 }); await first.emit("session_start", { reason: "startup" })
+  backgroundMonitorExtension(first.pi, { tasks, pollMs: 5, ...clock.options }); await first.emit("session_start", { reason: "startup" })
   const monitor = await first.execute("background_monitor", { command: "sleep 10", expectedRunningMinutes: 2 })
   const persisted = [...first.entries]
   await first.emit("session_shutdown", { reason: "reload" })
   const resumed = new FakePiRuntime({ sessionId: "check-in-resume", entries: persisted })
-  backgroundMonitorExtension(resumed.pi, { tasks: new BackgroundTasks(tmux), pollMs: 5, checkIns: clock.checkIns, now: clock.now, millisecondsPerMinute: 100 })
+  backgroundMonitorExtension(resumed.pi, { tasks: new BackgroundTasks(tmux), pollMs: 5, ...clock.options })
   try {
     await resumed.emit("session_start", { reason: "resume" })
     await clock.ready()
@@ -178,20 +178,26 @@ test("an agent check-in wakes its parent and can be rearmed through the task too
   const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
   const runtime = new FakePiRuntime({ sessionId: "agent-check-in" })
   const clock = controlledCheckIns()
-  backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5, checkIns: clock.checkIns, now: clock.now, millisecondsPerMinute: 100 })
-  await backgroundAgentExtension(runtime.pi, { tasks, tmux, pollMs: 5, checkIns: clock.checkIns, now: clock.now, millisecondsPerMinute: 100 })
+  backgroundMonitorExtension(runtime.pi, { tasks, pollMs: 5, ...clock.options })
+  await backgroundAgentExtension(runtime.pi, { tasks, tmux, pollMs: 5, ...clock.options })
   await runtime.emit("session_start", { reason: "startup" })
   try {
     const agent = await runtime.execute("background_agent", { task: "review", expectedCompletionMinutes: 2 })
-    await clock.ready()
+    const later = await runtime.execute("background_agent", { task: "audit", expectedCompletionMinutes: 3 })
+    await clock.ready(2)
     await clock.advance(1_199); assert.equal(runtime.messages.length, 0)
     await clock.advance(1_200); await waitFor(() => runtime.messages.length === 1)
     assert.match(runtime.messages[0]!.content, new RegExp(agent.details.id))
     await clock.advance(1_201); assert.equal(runtime.messages.length, 1)
     assert.equal((await runtime.execute("background_task", { action: "check-in", id: agent.details.id, afterMinutes: 3 })).details.status, "scheduled")
-    await clock.advance(1_500); assert.equal(runtime.messages.length, 1)
-    await clock.advance(1_501); await waitFor(() => runtime.messages.length === 2)
-    await clock.advance(1_502); assert.equal(runtime.messages.length, 2)
+    await clock.advance(1_299); assert.equal(runtime.messages.length, 1)
+    await clock.advance(1_300); await waitFor(() => runtime.messages.length === 2)
+    assert.match(runtime.messages[1]!.content, new RegExp(later.details.id))
+    await clock.advance(1_301); assert.equal(runtime.messages.length, 2)
+    await clock.advance(1_500); assert.equal(runtime.messages.length, 2)
+    await clock.advance(1_501); await waitFor(() => runtime.messages.length === 3)
+    assert.match(runtime.messages[2]!.content, new RegExp(agent.details.id))
+    await clock.advance(1_502); assert.equal(runtime.messages.length, 3)
   } finally { await runtime.emit("session_shutdown", { reason: "reload" }) }
 }))
 
