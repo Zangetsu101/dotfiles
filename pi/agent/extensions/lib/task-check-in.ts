@@ -10,7 +10,7 @@ export function createTaskCheckInScheduler(options: {
   const setTimer = options.setTimer ?? setTimeout
   const clearTimer = options.clearTimer ?? clearTimeout
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
-  const callbacks = new Map<string, () => void | Promise<void>>()
+  const callbacks = new Map<string, () => boolean | void | Promise<boolean | void>>()
   type State = { id: string; deadline: number }
   const file = (statusFile: string) => `${statusFile}.check-in`
 
@@ -53,8 +53,9 @@ export function createTaskCheckInScheduler(options: {
     const state = await read(statusFile)
     if (!state || state.id !== id) return
     if (state.deadline > now()) { arm(statusFile, state); return }
+    const claimFile = `${file(statusFile)}.${id}.claimed`
     try {
-      const claim = await open(`${file(statusFile)}.${id}.claimed`, "wx", 0o600)
+      const claim = await open(claimFile, "wx", 0o600)
       await claim.close()
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "EEXIST") return
@@ -62,7 +63,10 @@ export function createTaskCheckInScheduler(options: {
     }
     if (await exists(statusFile) || (await read(statusFile))?.id !== id) return
     const callback = callbacks.get(statusFile)
-    if (callback && (await read(statusFile))?.id === id) await callback()
+    if (!callback || (await read(statusFile))?.id !== id) return
+    if (await callback() !== false || await exists(statusFile) || (await read(statusFile))?.id !== id) return
+    await rm(claimFile, { force: true })
+    if (callbacks.has(statusFile)) arm(statusFile, { ...state, deadline: now() + 1_000 })
   }
 
   return {
@@ -77,14 +81,10 @@ export function createTaskCheckInScheduler(options: {
       }
       if (callbacks.has(statusFile)) arm(statusFile, state)
     },
-    async watch(statusFile: string, callback: () => void | Promise<void>) {
+    async watch(statusFile: string, callback: () => boolean | void | Promise<boolean | void>) {
       callbacks.set(statusFile, callback)
       const state = await read(statusFile)
       if (state) arm(statusFile, state)
-    },
-    async cancel(statusFile: string) {
-      stop(statusFile)
-      await rm(file(statusFile), { force: true })
     },
     stop,
   }

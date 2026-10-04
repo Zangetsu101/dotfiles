@@ -19,6 +19,7 @@ export type BackgroundTask = {
   label: string
   displayName?: string
   status: TaskStatus
+  startedAt?: number
   target: string
   parent: string
   parentId?: string
@@ -105,7 +106,7 @@ type CreateInput = {
   env?: Record<string, string>
   metadata?: Record<string, string>
 }
-const keys = ["kind", "id", "label", "display_name", "status", "parent", "parent_id", "parent_target", "family_id", "root_id", "root_pane", "pool_window", "cwd", "status_file", "output_file"] as const
+const keys = ["kind", "id", "label", "display_name", "status", "started_at", "parent", "parent_id", "parent_target", "family_id", "root_id", "root_pane", "pool_window", "cwd", "status_file", "output_file"] as const
 
 export class BackgroundTasks {
   private readonly tmux: TmuxProcessAdapter
@@ -166,6 +167,7 @@ export class BackgroundTasks {
     const familyId = input.familyId ?? process.env.PI_BACKGROUND_TASK_FAMILY_ID ?? `root-${process.pid}`
     return serialized(familyId, () => this.withFamilyLock(familyId, async () => {
       const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+      let startedAt: number
       const directory = await mkdtemp(join(tmpdir(), `pi-background-task-${id}-`))
       const parentId = input.parentId ?? input.parent ?? input.rootId ?? familyId
       const rootId = input.rootId ?? familyId
@@ -201,6 +203,7 @@ export class BackgroundTasks {
         const environment = Object.entries({ PI_BACKGROUND_TASK_STATUS_FILE: statusFile, PI_BACKGROUND_TASK_PARENT: input.parentTarget ?? input.parent ?? rootPane, PI_BACKGROUND_TASK_PARENT_ID: parentId, PI_BACKGROUND_TASK_FAMILY_ID: familyId, PI_BACKGROUND_TASK_FAMILY_NAME: input.familyName ?? familyId, PI_BACKGROUND_TASK_ROOT_ID: rootId, PI_BACKGROUND_TASK_ROOT_PANE: rootPane, PI_BACKGROUND_TASK_ID: id, PI_BACKGROUND_TASK_LABEL: input.label, ...(input.statusFileEnv ? { [input.statusFileEnv]: statusFile } : {}), ...(input.env ?? {}) }).flatMap(([key, value]) => ["-e", `${key}=${value}`])
         const wrapper = ['status="$1"; output="$2"; ready="$3"; shift 3', 'tmux wait-for "$ready"', '"$@"', 'code=$?', 'state=completed; [ "$code" -eq 0 ] || state=failed', 'if [ ! -e "$status" ]; then', '  printf \'{"status":"%s","exitCode":%s}\\n\' "$state" "$code" > "$status.tmp"', '  mv "$status.tmp" "$status"', 'fi', input.interactiveAfterExit ? 'exec "${SHELL:-/bin/bash}" -l' : 'exit "$code"'].join("\n")
         if (input.kind === "agent") {
+          startedAt = Date.now()
           target = await this.tmux.run(["new-window", "-d", "-P", "-F", "#{window_id}", "-t", session, "-n", displayName, "-c", input.cwd, ...environment, "/bin/bash", "-c", wrapper, "background-task", statusFile, outputFile, ready, input.command, ...input.args])
           target ||= `${session}:${displayName}`; createdWindow = target
         } else {
@@ -214,14 +217,15 @@ export class BackgroundTasks {
             this.pools.set(familyId, [...(this.pools.get(familyId) ?? []), pool])
             createdWindow = pool.window
           }
+          startedAt = Date.now()
           target = await this.tmux.run(["split-window", "-d", "-P", "-F", "#{pane_id}", "-t", pool.window, "-c", input.cwd, ...environment, "/bin/bash", "-c", wrapper, "background-task", statusFile, outputFile, ready, input.command, ...input.args])
           pool.count++
           poolWindow = pool.window
           target ||= pool.window
           if (createdPool) await this.tmux.run(["kill-pane", "-t", `${pool.window}.0`]).catch(() => undefined)
         }
-        const task: BackgroundTask = { id, familyId, rootId, kind: input.kind, label: input.label, displayName, status: "running", target, parent: parentId, parentId, parentTarget: input.parentTarget ?? input.parent ?? rootPane, rootPane, poolWindow, cwd: input.cwd, statusFile, outputFile, storageMode: "family" }
-        const values: Record<(typeof keys)[number], string> = { kind: task.kind, id, label: task.label, display_name: displayName, status: "running", parent: parentId, parent_id: parentId, parent_target: task.parentTarget ?? "", family_id: familyId, root_id: rootId, root_pane: rootPane, pool_window: poolWindow ?? "", cwd: task.cwd, status_file: statusFile, output_file: outputFile }
+        const task: BackgroundTask = { id, familyId, rootId, kind: input.kind, label: input.label, displayName, status: "running", startedAt, target, parent: parentId, parentId, parentTarget: input.parentTarget ?? input.parent ?? rootPane, rootPane, poolWindow, cwd: input.cwd, statusFile, outputFile, storageMode: "family" }
+        const values: Record<(typeof keys)[number], string> = { kind: task.kind, id, label: task.label, display_name: displayName, status: "running", started_at: String(startedAt), parent: parentId, parent_id: parentId, parent_target: task.parentTarget ?? "", family_id: familyId, root_id: rootId, root_pane: rootPane, pool_window: poolWindow ?? "", cwd: task.cwd, status_file: statusFile, output_file: outputFile }
         const scope = input.kind === "agent" ? "-w" : "-p"
         await Promise.all([
           ...keys.map((key) => this.tmux.run(["set-option", scope, "-t", target, `@pi_task_${key}`, values[key]])),
@@ -341,6 +345,7 @@ export class BackgroundTasks {
         label: value.label,
         displayName: value.display_name,
         status: value.status as TaskStatus,
+        startedAt: value.started_at && Number.isFinite(Number(value.started_at)) ? Number(value.started_at) : undefined,
         target,
         parent: value.parent,
         parentId: value.parent_id || value.parent,

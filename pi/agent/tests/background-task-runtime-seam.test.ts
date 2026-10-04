@@ -135,6 +135,7 @@ test("monitor check-ins respect both public tool durations at their boundaries",
     await clock.advance(1_199); assert.equal(runtime.messages.length, 0)
     await clock.advance(1_200); await waitFor(() => runtime.messages.length === 1)
     assert.match(runtime.messages[0]!.content, new RegExp(monitor.details.id))
+    assert.match(runtime.messages[0]!.content, /status: running; elapsed: \d+ minutes/)
     await clock.advance(1_201); assert.equal(runtime.messages.length, 1)
     const result = await runtime.execute("background_task", { action: "check-in", id: monitor.details.id, afterMinutes: 3 })
     assert.equal(result.details.status, "scheduled")
@@ -274,11 +275,14 @@ test("a monitor inherited by its pool window counts once in the status line", as
 
 test("resuming in a new root pane updates direct children's parent navigation", async () => {
   const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+  const beforeStart = Date.now()
   const child = await tasks.create({ ...family, kind: "agent", label: "research", parentId: "root-one", parentTarget: "%root" })
 
   await tasks.reconcileFamily({ familyId: family.familyId, familyName: family.familyName, rootId: family.rootId, rootPane: "%resumed" })
 
   assert.equal((await tasks.resolve(child.id, { familyId: family.familyId }))?.parentTarget, "%resumed")
+  assert.ok(child.startedAt !== undefined && child.startedAt >= beforeStart && child.startedAt <= Date.now())
+  assert.equal((await new BackgroundTasks(tmux).resolve(child.id, { familyId: family.familyId }))?.startedAt, child.startedAt)
 })
 
 test("a child returns to the root's current pane after resume", async () => {
