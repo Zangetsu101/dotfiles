@@ -1,3 +1,4 @@
+- Before editing Pi extensions, create a dedicated Git worktree and make all changes there. Keep the checkout used by the running Pi session unchanged until the changes are ready to deploy.
 - Pi extension changes: run `npm --prefix pi/agent run check`.
 - follow conventional commit messages.
 
