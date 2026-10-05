@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process"
-import { mkdtemp, open, readFile, rename, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, open, readFile, rename, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
 
+export const taskMetadataDirectory = join(tmpdir(), `pi-task-metadata-${process.getuid?.() ?? "user"}`)
+export type TaskMetadataOptions = { metadataDirectory?: string }
 const execFileAsync = promisify(execFile)
 export const BACKGROUND_TASK_CREATED = "pi:background-task-created"
 export const BACKGROUND_TASK_STATUS_CHANGED = "pi:background-task-status-changed"
@@ -65,8 +67,12 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`
 }
 export async function writeTaskCompletion(path: string, completion: TaskCompletionRecord): Promise<void> {
+  await writeAtomic(path, JSON.stringify(completion))
+}
+
+async function writeAtomic(path: string, contents: string): Promise<void> {
   const temporary = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
-  await writeFile(temporary, JSON.stringify(completion), { encoding: "utf8", mode: 0o600 })
+  await writeFile(temporary, contents, { encoding: "utf8", mode: 0o600 })
   await rename(temporary, path)
 }
 
@@ -113,8 +119,23 @@ export class BackgroundTasks {
   private readonly known = new Map<string, BackgroundTask>()
   private readonly sessions = new Map<string, string>()
   private readonly pools = new Map<string, Array<{ window: string; count: number }>>()
-  constructor(tmux: TmuxProcessAdapter = systemTmux) {
+  private readonly metadataDirectory: string
+  constructor(tmux: TmuxProcessAdapter = systemTmux, options: TaskMetadataOptions = {}) {
     this.tmux = tmux
+    this.metadataDirectory = options.metadataDirectory ?? taskMetadataDirectory
+  }
+
+  private async invalidateMetadata(): Promise<void> {
+    await mkdir(this.metadataDirectory, { recursive: true, mode: 0o700 })
+    await writeAtomic(join(this.metadataDirectory, "invalidation"), "")
+  }
+
+  async watchMetadata(query: TaskQuery, listener: (tasks: BackgroundTask[]) => void): Promise<() => void> {
+    const { sharedTaskMetadataWatcher, BackgroundTaskWatcher } = await import("./background-task-watcher.ts")
+    const watcher = this.tmux === systemTmux && this.metadataDirectory === taskMetadataDirectory
+      ? sharedTaskMetadataWatcher
+      : new BackgroundTaskWatcher(this.tmux, { metadataDirectory: this.metadataDirectory })
+    return watcher.watch(query, listener)
   }
 
   remember(task: BackgroundTask): void {
@@ -236,6 +257,7 @@ export class BackgroundTasks {
         if (input.remainOnExit) await this.tmux.run(["set-option", "-p", "-t", target, "remain-on-exit", "on"])
         await this.tmux.run(["wait-for", "-S", ready])
         await this.commitSiblingOrdinal(session, allocation)
+        await this.invalidateMetadata()
         this.known.set(id, task)
         if (createdSession) await this.tmux.run(["kill-window", "-t", `${session}:bootstrap`]).catch(() => undefined)
         return task
@@ -285,6 +307,7 @@ export class BackgroundTasks {
       const scope = task.kind === "agent" ? "-w" : "-p"
       await this.tmux.run(["set-option", scope, "-t", task.target, "@pi_task_root_pane", family.rootPane])
       if (task.parentId === family.rootId) await this.tmux.run(["set-option", scope, "-t", task.target, "@pi_task_parent_target", family.rootPane])
+      await this.invalidateMetadata()
     }
   }
   async renameFamily(familyId: string, label: string): Promise<void> {
@@ -296,6 +319,7 @@ export class BackgroundTasks {
       this.tmux.run(["rename-session", "-t", session, name]),
       this.tmux.run(["set-option", "-t", session, "@pi_task_family_name", label]),
     ])
+    await this.invalidateMetadata()
   }
   async renameNode(nodeId: string, label: string): Promise<void> {
     const familyId = (await this.list()).find((task) => task.id === nodeId)?.familyId
@@ -328,10 +352,17 @@ export class BackgroundTasks {
       this.tmux.run(["set-option", scope, "-t", task.target, "@pi_task_display_name", task.displayName ?? task.label]),
     ])
     this.known.set(task.id, task)
+    await this.invalidateMetadata()
   }
   async list(query?: TaskQuery, liveOnly = false): Promise<BackgroundTask[]> {
     const format = (target: string) => `${target}\t${keys.map((key) => `#{@pi_task_${key}}`).join("\t")}`
-    const [windows, panes] = await Promise.all([this.tmux.run(["list-windows", "-a", "-F", format("#{window_id}")]).catch(() => ""), this.tmux.run(["list-panes", "-a", "-F", format("#{pane_id}")]).catch(() => "")])
+    const listingFailure = (error: unknown): string => {
+      if (!liveOnly) return ""
+      const stderr = error instanceof Error && "stderr" in error ? error.stderr : undefined
+      if (typeof stderr === "string" && /^(?:no server running on [^\n]+|no sessions|error connecting to [^\n]+ \(No such file or directory\))\s*$/.test(stderr)) return ""
+      throw error
+    }
+    const [windows, panes] = await Promise.all([this.tmux.run(["list-windows", "-a", "-F", format("#{window_id}")]).catch(listingFailure), this.tmux.run(["list-panes", "-a", "-F", format("#{pane_id}")]).catch(listingFailure)])
     const parse = (line: string): BackgroundTask | undefined => {
       const [target, ...fields] = line.split("\t")
       if (!target) return undefined
@@ -409,6 +440,7 @@ export class BackgroundTasks {
     this.known.set(task.id, task)
     const scope = task.kind === "monitor" ? "-p" : "-w"
     await this.tmux.run(["set-option", scope, "-t", task.target, "@pi_task_status", status]).catch(() => undefined)
+    await this.invalidateMetadata()
   }
 
   async attach(task: Pick<BackgroundTask, "target">): Promise<"switched" | string> {
@@ -441,6 +473,7 @@ export class BackgroundTasks {
         try {
           await this.tmux.run([task.kind === "monitor" ? "kill-pane" : "kill-window", "-t", task.target])
           this.known.delete(task.id)
+          await this.invalidateMetadata()
           if (task.kind === "monitor" && task.familyId) await this.releasePool(task, task.familyId)
           removed++
         } catch {}

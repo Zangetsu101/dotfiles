@@ -1,8 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
-import { BACKGROUND_TASK_CREATED, BackgroundTasks, type BackgroundTask } from "./lib/background-task.ts"
-import { familyForContext, type TaskFamily } from "./lib/background-family.ts"
+import { BackgroundTasks, type BackgroundTask } from "./lib/background-task.ts"
+import { familyForContext } from "./lib/background-family.ts"
 
-const REFRESH_MS = 1_000
 const STATUS_KEY = "background-tasks"
 
 export function formatRunningTasks(tasks: BackgroundTask[], nodeId?: string): string | undefined {
@@ -17,32 +16,33 @@ export function formatRunningTasks(tasks: BackgroundTask[], nodeId?: string): st
   return `tasks: ${parts.join(" · ")}`
 }
 
-export default function (pi: ExtensionAPI) {
-  const tasks = new BackgroundTasks()
-  let timer: NodeJS.Timeout | undefined
-  let update: (() => Promise<void>) | undefined
-  let family: TaskFamily | undefined
+export default function (pi: ExtensionAPI, options: { tasks?: BackgroundTasks } = {}) {
+  const tasks = options.tasks ?? new BackgroundTasks()
+  let stopMetadata: (() => void) | undefined
+  let generation = 0
+  let shuttingDown = false
 
   const restore = async (reason: string, ctx: ExtensionContext) => {
-    family = familyForContext(reason, ctx, pi.getSessionName?.())
-    if (update) await update()
+    const restoring = ++generation
+    stopMetadata?.()
+    stopMetadata = undefined
+    if (shuttingDown || !ctx.hasUI) return
+    const family = familyForContext(reason, ctx, pi.getSessionName?.())
+    const stop = await tasks.watchMetadata({ subtreeRootId: family.nodeId }, (visible) => {
+      if (!shuttingDown && restoring === generation) ctx.ui.setStatus(STATUS_KEY, formatRunningTasks(visible, family.nodeId))
+    })
+    if (shuttingDown || restoring !== generation) stop()
+    else stopMetadata = stop
   }
 
-  pi.on("session_start", async (event, ctx) => {
-    await restore(event.reason, ctx)
-    if (!ctx.hasUI) return
-    update = async () => ctx.ui.setStatus(STATUS_KEY, formatRunningTasks(await tasks.list({ subtreeRootId: family!.nodeId }, true), family!.nodeId))
-    await update()
-    timer = setInterval(() => void update?.(), REFRESH_MS)
-  })
-
+  pi.on("session_start", async (event, ctx) => { await restore(event.reason, ctx) })
   pi.on("session_tree", async (_event, ctx) => { await restore("tree", ctx) })
-  pi.events.on(BACKGROUND_TASK_CREATED, () => void update?.())
 
   pi.on("session_shutdown", (_event, ctx) => {
-    if (timer) clearInterval(timer)
-    timer = undefined
-    update = undefined
+    shuttingDown = true
+    generation++
+    stopMetadata?.()
+    stopMetadata = undefined
     if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, undefined)
   })
 }

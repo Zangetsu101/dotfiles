@@ -83,8 +83,10 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
   const activities = new Map<string, BackgroundActivity>()
   let shuttingDown = false
   let shutdown: Promise<void> | undefined
+  let stopMetadata: (() => void) | undefined
   let taskCache: BackgroundTask[] = []
   let family: TaskFamily | undefined
+  let generation = 0
 
   const currentTask = (): BackgroundTask => ({
     id: family!.nodeId, familyId: family!.familyId, rootId: family!.rootId, kind: "agent", label: family!.nodeLabel,
@@ -93,8 +95,12 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     cwd: "", statusFile: "", storageMode: "family",
   })
   const scope = () => configuredSubtreeRootId ?? family?.nodeId ?? process.env.TMUX_PANE ?? ""
-  const refreshTasks = async () => (taskCache = await tasks.list({ subtreeRootId: scope() }))
   const restoreFamily = async (reason: string, ctx: ExtensionContext) => {
+    const restoring = ++generation
+    const active = () => !shuttingDown && restoring === generation
+    if (!active()) return false
+    stopMetadata?.()
+    stopMetadata = undefined
     family = familyForContext(reason, ctx, pi.getSessionName?.())
     const restored = new Map<string, BackgroundTask>()
     for (const entry of ctx.sessionManager.getBranch()) {
@@ -112,6 +118,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     if (family.isRoot) {
       pi.appendEntry?.(FAMILY_ENTRY, { familyId: family.familyId, rootId: family.rootId })
       const exists = await tasks.familyExists?.(family.familyId)
+      if (!active()) return false
       if (exists) await tasks.reconcileFamily?.(family)
       else for (const task of restored.values()) {
         if (task.status !== "running") continue
@@ -120,7 +127,20 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
         pi.appendEntry?.(TASK_ENTRY, task)
       }
     }
-    await refreshTasks()
+    if (!active()) return false
+    const subtreeRootId = scope()
+    const visible = await tasks.list({ subtreeRootId })
+    if (!active()) return false
+    taskCache = visible
+    const stop = await tasks.watchMetadata({ subtreeRootId }, (visible) => {
+      if (active()) taskCache = visible
+    })
+    if (!active()) {
+      stop()
+      return false
+    }
+    stopMetadata = stop
+    return true
   }
 
   const stopMonitoring = (id: string, finishActivity = true) => {
@@ -135,18 +155,20 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
   }
 
   const monitor = (task: BackgroundTask, ctx: ExtensionContext) => {
-    if (timers.has(task.id)) return
-    void checkIns.watch(task.statusFile, () => notifyRunningTask(pi, tasks, task, () => !shuttingDown && !removedTasks.has(task.id)))
+    if (shuttingDown || timers.has(task.id)) return
+    const monitoring = generation
+    const active = () => !shuttingDown && monitoring === generation && !removedTasks.has(task.id)
+    void checkIns.watch(task.statusFile, () => notifyRunningTask(pi, tasks, task, active))
     const activity = { id: `background-monitor:${task.id}`, source: "background_monitor", label: task.label }
     activities.set(task.id, activity)
     pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
     const consume = async () => {
-      if (shuttingDown || removedTasks.has(task.id)) return
+      if (!active()) return
       const completion = await tasks.claimCompletionOrReconcile(task)
       if (removedTasks.has(task.id) || !completion || !("status" in completion)) return
-      stopMonitoring(task.id, false)
+      if (active()) stopMonitoring(task.id, false)
       await tasks.setStatus(task, completion.status === "completed" ? "succeeded" : completion.status === "cancelled" ? "terminated" : "failed")
-      if (removedTasks.has(task.id)) return
+      if (!active()) return
       pi.events.emit(BACKGROUND_TASK_STATUS_CHANGED, task)
       pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
       const output = await readOutputTail(task.outputFile, MAX_OUTPUT_CHARS)
@@ -158,7 +180,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
           : `finished with exit code ${completion.exitCode ?? 0}`
       const summary = `Background monitor ${task.id} (${task.label}) ${status}.`
       const attach = backgroundAttachCommand(task)
-      if (removedTasks.has(task.id)) return
+      if (!active()) return
       if (ctx.hasUI) ctx.ui.notify(summary, failed ? "error" : "info")
       pi.sendMessage({ customType: "background-monitor", details: { summary, label: task.label, status: completion.status === "cancelled" ? "terminated" : completion.status, id: task.id, target: task.target, output: output.trim() || "(no output)", attach, exitCode: completion.exitCode }, content: `${summary}\nAttach with: ${attach}\n\nOutput:\n${output.trim() || "(no output)"}\n\nReview the result. When all background work has returned, provide the complete standalone result in your final turn, including any conclusions that remain unchanged.`, display: true }, { deliverAs: "followUp", triggerTurn: true })
     }
@@ -172,12 +194,14 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
   }
 
   pi.events.on(BACKGROUND_TASK_CREATED, (task) => {
+    if (shuttingDown) return
     const created = task as BackgroundTask
     if (created.familyId === family?.familyId) pi.appendEntry?.(TASK_ENTRY, created)
     if ((configuredSubtreeRootId ? created.parentId === configuredSubtreeRootId : created.familyId === family?.familyId && created.parentId === family?.nodeId) && !taskCache.some((item) => item.id === created.id)) taskCache.push(created)
   })
 
   pi.events.on(BACKGROUND_TASK_STATUS_CHANGED, (task) => {
+    if (shuttingDown) return
     const changed = task as BackgroundTask
     const cached = taskCache.find((item) => item.id === changed.id)
     if (cached) cached.status = changed.status
@@ -185,7 +209,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
   })
 
   pi.on("session_start", async (event, ctx) => {
-    await restoreFamily(event.reason, ctx)
+    if (!await restoreFamily(event.reason, ctx)) return
     for (const task of taskCache) {
       if (task.kind === "monitor" && task.status === "running" && (configuredSubtreeRootId || task.parentId === family!.nodeId)) monitor(task, ctx)
     }
@@ -197,7 +221,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     timers.clear()
     for (const activity of activities.values()) pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
     activities.clear()
-    await restoreFamily("tree", ctx)
+    if (!await restoreFamily("tree", ctx)) return
     for (const task of taskCache) {
       if (task.kind === "monitor" && task.status === "running" && (configuredSubtreeRootId || task.parentId === family!.nodeId)) monitor(task, ctx)
     }
@@ -336,6 +360,8 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     if (shutdown) return shutdown
     shutdown = (async () => {
       shuttingDown = true
+      stopMetadata?.()
+      stopMetadata = undefined
       for (const task of taskCache) if (task.kind === "monitor") checkIns.stop(task.statusFile)
       for (const timer of timers.values()) clearInterval(timer)
       timers.clear()
