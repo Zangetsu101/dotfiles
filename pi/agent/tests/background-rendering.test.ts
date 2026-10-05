@@ -115,14 +115,16 @@ test("expanded inspection preserves quoted instructions and uses the producer's 
   assert.doesNotMatch(rendered, /tmux attach/)
 })
 
-test("background_task summaries identify actions and meaningful statuses including legacy results", () => {
+test("background_task calls identify actions while results supply complementary statuses", () => {
   const renderer = backgroundToolRenderers("background_task")
   for (const [action, status] of Object.entries({ list: "listed", inspect: "inspected", "check-in": "scheduled", terminate: "terminated" })) {
     const args = { action, id: "one" }
     const result = { content: [{ type: "text" as const, text: "output" }], details: undefined }
     const output = renderer.renderResult!(result, { expanded: false, isPartial: false }, theme, { ...context, args }).render(120).join("\n")
-    assert.ok(output.includes(`· ${action} · one · ${status}`))
-    assert.doesNotMatch(output, /· result/)
+    const call = renderer.renderCall!(args, theme, { ...context, args }).render(120).join("\n")
+    assert.ok(call.includes(`background_task · ${action} · one`))
+    assert.equal(output.trim(), status)
+    assert.doesNotMatch(output, /background_task|one/)
     const structured = { ...result, details: { status: action === "inspect" ? "failed" : status } }
     const rendered = renderer.renderResult!(structured, { expanded: false, isPartial: false }, theme, { ...context, args }).render(120).join("\n")
     assert.ok(rendered.includes(structured.details.status))

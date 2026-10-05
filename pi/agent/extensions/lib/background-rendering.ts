@@ -1,4 +1,4 @@
-import type { ExtensionAPI, MessageRenderer, ToolRenderers } from "@earendil-works/pi-coding-agent"
+import { keyText, type ExtensionAPI, type MessageRenderer, type ToolRenderers } from "@earendil-works/pi-coding-agent"
 import { Text } from "@earendil-works/pi-tui"
 
 export type BackgroundMessageDetails = {
@@ -19,6 +19,10 @@ const record = (value: unknown): Record<string, unknown> => value && typeof valu
 const string = (value: unknown): string => typeof value === "string" ? value : ""
 const inline = (value: string) => value.replace(/[\r\n\t]/g, " ")
 const actionStatuses: Record<string, string> = { list: "listed", inspect: "inspected", "check-in": "scheduled", terminate: "terminated" }
+const expandHint = (expanded: boolean) => {
+  const key = expanded ? "" : keyText("app.tools.expand")
+  return key ? ` · ${key} to expand` : ""
+}
 const themedText = (content: () => string) => ({
   render: (width: number) => new Text(content(), 0, 0).render(width),
   invalidate() {},
@@ -29,7 +33,8 @@ export function backgroundToolRenderers(name: string): ToolRenderers {
     renderCall(input, theme, context) {
       const args = record(input)
       const label = string(args.label) || string(args.id) || string(args.action) || (name === "background_agent" ? string(args.task) : string(args.command)).split("\n")[0] || "task"
-      const heading = `${name} · ${inline(label)}`
+      const action = name === "background_task" ? string(args.action) : ""
+      const heading = `${name}${action && action !== label ? ` · ${inline(action)}` : ""} · ${inline(label)}`
       const body = context.expanded ? string(args.task) || string(args.command) || string(args.message) : ""
       return themedText(() => theme.fg("toolTitle", heading) + (body ? `\n${theme.fg("toolOutput", body)}` : ""))
     },
@@ -39,15 +44,14 @@ export function backgroundToolRenderers(name: string): ToolRenderers {
       const action = string(args.action)
       const defaultStatus = name === "background_task" ? actionStatuses[action] : name === "background_agent_message" ? "delivered" : "started"
       const status = context.isError ? "error" : options.isPartial ? "running" : string(details.status) || defaultStatus || "started"
-      const label = string(details.label) || string(args.label) || string(args.id)
-      const heading = `${name}${action ? ` · ${action}` : ""}${label ? ` · ${inline(label)}` : ""} · ${status}`
+      const heading = status
       const id = string(details.id)
       const target = string(details.target)
       const attach = string(details.attach) || textContent(result.content).match(/^Attach with: (.+)$/m)?.[1] || (target ? `tmux attach -t ${target}` : "")
       const extra = [id && `Task: ${id}`, target && `Tmux target: ${target}`, attach && `Attach: ${attach}`].filter(Boolean).join("\n")
       const output = typeof details.output === "string" ? details.output : textContent(result.content)
       const body = options.expanded ? [output, extra].filter(Boolean).join("\n\n") : ""
-      return themedText(() => theme.fg(context.isError || status === "error" ? "error" : options.isPartial ? "warning" : "muted", heading) + (body ? `\n${theme.fg("toolOutput", body)}` : ""))
+      return themedText(() => theme.fg(context.isError || status === "error" ? "error" : options.isPartial ? "warning" : "muted", heading) + theme.fg("muted", expandHint(options.expanded)) + (body ? `\n${theme.fg("toolOutput", body)}` : ""))
     },
   }
 }
@@ -74,7 +78,7 @@ export const backgroundMessageRenderer: MessageRenderer<BackgroundMessageDetails
     ? `${name} · ${inline(string(details.label))} · ${status}${typeof details.exitCode === "number" ? ` · exit ${details.exitCode}` : ""}${details.elapsed ? ` · ${inline(string(details.elapsed))}` : ""}`
     : `${name} · ${inline(raw.split("\n")[0] || "result")}`
   const body = structured ? [string(details.summary), string(details.output), `Task: ${string(details.id)}`, `Tmux target: ${string(details.target)}`, string(details.attach) && `Attach: ${string(details.attach)}`].filter(Boolean).join("\n\n") : legacyBody(raw, message.customType)
-  return themedText(() => theme.fg(status === "failed" || status === "terminated" ? "error" : checkIn ? "warning" : "success", heading) + (options.expanded ? `\n${theme.fg("toolOutput", body)}` : ""))
+  return themedText(() => theme.fg(status === "failed" || status === "terminated" ? "error" : checkIn ? "warning" : "success", heading) + theme.fg("muted", expandHint(options.expanded)) + (options.expanded ? `\n${theme.fg("toolOutput", body)}` : ""))
 }
 
 export function registerBackgroundMessages(pi: Pick<ExtensionAPI, "registerMessageRenderer">, kind: "agent" | "monitor") {
