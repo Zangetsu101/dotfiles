@@ -14,6 +14,10 @@ path_append() {
 
 path_prepend "$HOME/.local/bin"
 
+if [ -n "${WSL_DISTRO_NAME-}" ] && [ -d /mnt/c/Windows/System32/WindowsPowerShell/v1.0 ]; then
+    path_append /mnt/c/Windows/System32/WindowsPowerShell/v1.0
+fi
+
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
 [ -s "$NVM_DIR/bash_completion" ] && source "$NVM_DIR/bash_completion"

@@ -5,7 +5,7 @@
   "tui.select.pageDown": ["pageDown", "ctrl+d"],
   "tui.select.confirm": ["enter"],
   "tui.select.cancel": ["escape", "ctrl+c"],
-  "app.clipboard.pasteImage": ["ctrl+v"],
+  "app.clipboard.pasteImage": ["ctrl+v", "alt+v"],
   "app.model.cycleForward": ["alt+n"],
   "app.model.cycleBackward": ["alt+p"]
 }
