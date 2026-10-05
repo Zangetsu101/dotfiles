@@ -13,6 +13,20 @@ class SharedTasks {
   claimed = new Set<string>()
   terminations: Array<{ id: string; reason: string }> = []
   claimBarrier?: Promise<void>
+  subscriptionBarrier?: Promise<void>
+  subscriptionStarted?: () => void
+  listeners = new Set<() => Promise<void>>()
+  async watchMetadata(query: { subtreeRootId: string }, listener: (tasks: BackgroundTask[]) => void) {
+    const update = async () => listener(await this.list(query))
+    this.subscriptionStarted?.()
+    await this.subscriptionBarrier
+    this.listeners.add(update)
+    await update()
+    return () => { this.listeners.delete(update) }
+  }
+  async invalidateMetadata() {
+    await Promise.all([...this.listeners].map((update) => update()))
+  }
   async available() { return true }
   async list(query?: { subtreeRootId: string }) {
     if (!query) return this.tasks
@@ -117,6 +131,60 @@ test("task list formatting renders only the caller subtree as a tree", () => {
   ].join("\n"))
 })
 
+test("attach completions discover descendants created by another Pi process", async () => {
+  const shared = new SharedTasks()
+  shared.tasks = [{ ...runningTask("parent"), kind: "agent" }]
+  const instance = runtime(shared)
+  await instance.emit("session_start", { reason: "startup" })
+  try {
+    shared.tasks.push({ ...runningTask("nested"), kind: "agent", parentId: "parent" })
+    await shared.invalidateMetadata()
+    await eventually(() => instance.commands.get("task").getArgumentCompletions("attach ")?.some((item: any) => item.value === "attach nested"))
+    shared.tasks.push({ ...runningTask("outside"), parentId: "other-root" })
+    await shared.invalidateMetadata()
+    assert.equal(instance.commands.get("task").getArgumentCompletions("attach outside"), null)
+  } finally {
+    await instance.emit("session_shutdown", { reason: "reload" })
+  }
+})
+
+test("attach metadata subscription is replaced on tree navigation and released on shutdown", async () => {
+  const shared = new SharedTasks()
+  const instance = runtime(shared)
+  await instance.emit("session_start", { reason: "startup" })
+  assert.equal(shared.listeners.size, 1)
+  await instance.emit("session_tree")
+  assert.equal(shared.listeners.size, 1)
+  await instance.emit("session_shutdown", { reason: "reload" })
+  assert.equal(shared.listeners.size, 0)
+  shared.tasks.push({ ...runningTask("late"), kind: "agent" })
+  await shared.invalidateMetadata()
+  assert.equal(instance.commands.get("task").getArgumentCompletions("attach late"), null)
+})
+
+test("pending monitor subscriptions cannot survive shutdown or overwrite a newer tree cache", async () => {
+  for (const replacement of ["session_shutdown", "session_tree"]) {
+    const shared = new SharedTasks()
+    let release!: () => void
+    let started!: () => void
+    const ready = new Promise<void>((resolve) => { started = resolve })
+    shared.subscriptionStarted = started
+    shared.subscriptionBarrier = new Promise<void>((resolve) => { release = resolve })
+    const instance = runtime(shared)
+    const old = instance.emit("session_start", { reason: "startup" })
+    await ready
+    shared.subscriptionBarrier = undefined
+    await instance.emit(replacement, { reason: "reload" })
+    shared.tasks.push({ ...runningTask("late"), kind: "agent" })
+    release()
+    await old
+    assert.equal(instance.commands.get("task").getArgumentCompletions("attach late"), null)
+    assert.equal(shared.listeners.size, replacement === "session_tree" ? 1 : 0)
+    await instance.emit("session_shutdown", { reason: "reload" })
+    assert.equal(shared.listeners.size, 0)
+  }
+})
+
 test("task completion offers actions before a search term is typed", () => {
   assert.deepEqual(taskArgumentCompletions([], " ")?.map((item) => item.value), ["list", "attach", "parent", "return", "terminate", "clean"])
 })
@@ -186,7 +254,7 @@ test("replacement and tree navigation do not warn when no owned monitor is runni
   assert.deepEqual(current.prompts, [])
 })
 
-test("shutdown waits for a racing completion instead of overwriting it with cancellation", async () => {
+test("shutdown settles a racing completion without cancellation or late UI delivery", async () => {
   const shared = new SharedTasks()
   shared.tasks.push(runningTask())
   shared.completions.set("one", { status: "completed", exitCode: 0 })
@@ -201,8 +269,27 @@ test("shutdown waits for a racing completion instead of overwriting it with canc
 
   assert.equal(shared.terminations.length, 0)
   assert.equal(shared.tasks[0]?.status, "succeeded")
-  assert.equal(current.messages.length, 1)
-  assert.match(current.messages[0].content, /finished with exit code 0/)
+  assert.equal(current.messages.length, 0)
+  assert.deepEqual(current.notifications, [])
+})
+
+test("tree navigation suppresses a completion claimed by the old monitor consumer", async () => {
+  const shared = new SharedTasks()
+  const task = runningTask()
+  shared.tasks.push(task)
+  shared.completions.set("one", { status: "completed", exitCode: 0 })
+  let release!: () => void
+  shared.claimBarrier = new Promise<void>((resolve) => { release = resolve })
+  const current = runtime(shared)
+  await current.emit("session_start", { reason: "startup" })
+  shared.tasks = []
+  await current.emit("session_tree")
+  release()
+  await current.emit("session_shutdown", { reason: "reload" })
+  assert.equal(task.status, "succeeded")
+  assert.deepEqual(current.messages, [])
+  assert.deepEqual(current.notifications, [])
+  assert.deepEqual(current.activity.finished, ["background-monitor:one"])
 })
 
 test("Root Pi quit can terminate an active nested descendant", async () => {
