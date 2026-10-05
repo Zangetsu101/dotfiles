@@ -286,11 +286,15 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       }
       const metadata = { id: task.id, label: task.label, target: task.target, attach: backgroundAttachCommand(task) }
       if (params.action === "inspect") {
-        const output = await readOutputTail(task.outputFile)
         const completion = await tasks.completion(task)
+        const settledAgent = task.kind === "agent" && completion && "kind" in completion && completion.kind === "settled"
+        const output = settledAgent
+          ? completion.output?.trim() || "(no final output)"
+          : (await readOutputTail(task.outputFile)).trim() || "(no output)"
         const status = completion ? "status" in completion ? completion.status : completion.kind === "exit" ? "failed" : "succeeded" : task.status
         const attach = backgroundAttachCommand(task)
-        return { content: [{ type: "text" as const, text: `${task.kind} ${task.id} (${task.label}): ${status}\nRecent output:\n${output.trim() || "(no output)"}` }], details: { status, id: task.id, label: task.label, target: task.target, attach, output: output.trim() || "(no output)" } }
+        const heading = settledAgent ? "Final output" : "Recent output"
+        return { content: [{ type: "text" as const, text: `${task.kind} ${task.id} (${task.label}): ${status}\n${heading}:\n${output}` }], details: { status, id: task.id, label: task.label, target: task.target, attach, output } }
       }
       if (task.status !== "running" || await tasks.completion(task)) return { content: [{ type: "text" as const, text: `Task ${task.id} is no longer running.` }], details: { ...metadata, status: "not_running" } }
       if (params.action === "terminate") {

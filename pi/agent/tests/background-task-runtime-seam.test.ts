@@ -114,6 +114,56 @@ test("the parent can inspect, reschedule, and terminate its monitor by ID", asyn
   } finally { await runtime.emit("session_shutdown", { reason: "reload" }) }
 }))
 
+async function withInspectableTasks(sessionId: string, run: (runtime: FakePiRuntime, tasks: BackgroundTasks, tmux: FakeTmuxProcessAdapter) => Promise<void>) {
+  await withTmuxEnvironment(async () => {
+    const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
+    const runtime = new FakePiRuntime({ sessionId })
+    backgroundMonitorExtension(runtime.pi, { tasks })
+    await backgroundAgentExtension(runtime.pi, { tasks, tmux, pollMs: 5 })
+    await runtime.emit("session_start", { reason: "startup" })
+    try { await run(runtime, tasks, tmux) } finally { await runtime.emit("session_shutdown", { reason: "reload" }) }
+  })
+}
+
+test("inspect returns a settled agent's saved final answer instead of terminal redraws", async () => withInspectableTasks("inspect-settled", async (runtime, tasks, tmux) => {
+    const agent = await runtime.execute("background_agent", { task: "review", expectedCompletionMinutes: 1 })
+    const task = (await tasks.resolve(agent.details.id, { familyId: "family:inspect-settled" }))!
+    const answer = `Review findings:\n${"Complete answer. ".repeat(300)}Done.`
+    await tmux.complete(agent.details.target, "completed", answer)
+    await writeFile(task.outputFile!, "\u001b[2KWorking... terminal redraw")
+    const inspected = await runtime.execute("background_task", { action: "inspect", id: agent.details.id })
+    assert.equal(inspected.details.status, "succeeded")
+    assert.equal(inspected.details.output, answer)
+    assert.equal(inspected.content[0].text, `agent ${agent.details.id} (review): succeeded\nFinal output:\n${answer}`)
+    assert.equal(inspected.details.attach, `/task attach ${agent.details.id}`)
+    await tmux.complete(agent.details.target, "completed")
+    await rm(task.outputFile!)
+    const empty = await runtime.execute("background_task", { action: "inspect", id: agent.details.id })
+    assert.equal(empty.details.output, "(no final output)")
+    assert.match(empty.content[0].text, /Final output:\n\(no final output\)$/)
+}))
+
+test("inspect keeps terminal tails for running agents, exited agents, and completed monitors", async () => withInspectableTasks("inspect-terminal", async (runtime, tasks, tmux) => {
+    const agent = await runtime.execute("background_agent", { task: "review", expectedCompletionMinutes: 1 })
+    const task = (await tasks.resolve(agent.details.id, { familyId: "family:inspect-terminal" }))!
+    await writeFile(task.outputFile!, "Working on review")
+    const running = await runtime.execute("background_task", { action: "inspect", id: agent.details.id })
+    assert.equal(running.details.status, "running")
+    assert.equal(running.details.output, "Working on review")
+    assert.match(running.content[0].text, /Recent output:/)
+    await tmux.complete(agent.details.target, "failed", "Agent exited unexpectedly")
+    const exited = await runtime.execute("background_task", { action: "inspect", id: agent.details.id })
+    assert.equal(exited.details.status, "failed")
+    assert.equal(exited.details.output, "Agent exited unexpectedly")
+    assert.match(exited.content[0].text, /Recent output:/)
+    const monitor = await runtime.execute("background_monitor", { command: "build", expectedRunningMinutes: 1 })
+    await tmux.complete(monitor.details.target, "completed", "Build succeeded")
+    const completed = await runtime.execute("background_task", { action: "inspect", id: monitor.details.id })
+    assert.equal(completed.details.status, "completed")
+    assert.equal(completed.details.output, "Build succeeded")
+    assert.match(completed.content[0].text, /Recent output:/)
+}))
+
 function controlledCheckIns() {
   let time = 1_000
   const timers = new Map<object, { deadline: number; callback: () => void }>()
