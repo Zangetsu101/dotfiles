@@ -1,4 +1,5 @@
 - Pi extension changes: run `npm --prefix pi/agent run check`.
+- follow conventional commit messages.
 
 ## Agent skills
 
