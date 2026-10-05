@@ -24,6 +24,8 @@ import {
 import { familyForContext, familyTaskParent, type TaskFamily } from "./lib/background-family.ts"
 import { taskCheckIns } from "./lib/task-check-in.ts"
 import { notifyRunningTask } from "./lib/background-task-check-in.ts"
+import { backgroundAttachCommand } from "./lib/background-attach.ts"
+import { backgroundToolRenderers, registerBackgroundMessages } from "./lib/background-rendering.ts"
 
 const execFileAsync = promisify(execFile)
 const STATUS_FILE_ENV = "PI_BACKGROUND_AGENT_STATUS_FILE"
@@ -240,6 +242,7 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
 }
 
 export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions = {}) {
+  registerBackgroundMessages(pi, "agent")
   const tasks = options.tasks ?? new BackgroundTasks(options.tmux ?? systemTmux)
   const tmux = options.tmux ?? directTmux
   const millisecondsPerMinute = options.millisecondsPerMinute ?? 60_000
@@ -349,15 +352,14 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       const cached = agentsCache.find((item) => item.id === agent.id)
       if (cached) cached.status = taskStatus
       pi.events.emit(BACKGROUND_TASK_STATUS_CHANGED, agent)
-      const attach = process.env.TMUX
-        ? `/task attach ${agent.id}`
-        : `tmux attach -t ${agent.target}`
+      const attach = backgroundAttachCommand(agent)
       const output = "output" in completion ? completion.output?.trim() || "(no final output)" : "(no final output)"
 
       if (watchers.get(agent.id) !== watcher) { consuming = false; return }
       pi.sendMessage(
         {
           customType: "background-agent",
+          details: { summary, label: agent.label, status: taskStatus === "succeeded" ? "completed" : taskStatus, id: agent.id, target: agent.target, output, attach, exitCode: completion.exitCode },
           content: `${summary}\nAttach with: ${attach}\n\nFinal output:\n${output}\n\nReview the result and report it to the user.`,
           display: true,
         },
@@ -397,15 +399,17 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
 
   pi.registerTool({
     name: "background_agent_message",
+    ...backgroundToolRenderers("background_agent_message"),
     label: "Message background agent",
     description: "Send a message to an unfinished background agent. Steers its active turn or starts a new turn if idle; waits for delivery acknowledgement.",
     parameters: Type.Object({ id: Type.String(), message: Type.String() }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       if (!family) await restoreFamily("startup", ctx)
       const agent = (await listAgents(tasks, tmux, family!.nodeId)).find((item) => item.id === params.id)
-      if (!params.message.trim()) return { content: [{ type: "text" as const, text: "Message must not be empty" }], details: { status: "error" } }
+      const metadata = agent ? { id: agent.id, label: agent.label, target: agent.target, attach: backgroundAttachCommand(agent) } : {}
+      if (!params.message.trim()) return { content: [{ type: "text" as const, text: "Message must not be empty" }], details: { ...metadata, status: "error" } }
       if (!agent) return { content: [{ type: "text" as const, text: "Agent not found in this task subtree. Check the agent ID from the background_agent result." }], details: { status: "not_found" } }
-      if (agent.status !== "running" || await tasks.completion(agent)) return { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { status: "not_running" } }
+      if (agent.status !== "running" || await tasks.completion(agent)) return { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { ...metadata, status: "not_running" } }
       const mailbox = `${agent.statusFile}.messages`
       const id = randomUUID()
       const request = join(mailbox, `${id}.request`)
@@ -417,7 +421,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         })
         if (!response) return undefined
         await rm(ack, { force: true })
-        return { content: [{ type: "text" as const, text: response }], details: { status: response === "delivered" ? "delivered" : "error" } }
+        return { content: [{ type: "text" as const, text: response }], details: { ...metadata, status: response === "delivered" ? "delivered" : "error" } }
       }
       try {
         await mkdir(mailbox, { recursive: true, mode: 0o700 })
@@ -430,7 +434,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         })
         if (!queued) {
           await rm(temporary, { force: true })
-          return { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { status: "not_running" } }
+          return { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { ...metadata, status: "not_running" } }
         }
         for (let attempt = 0; attempt < 100; attempt++) {
           const response = await acknowledged()
@@ -440,19 +444,20 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
             const lateAck = await acknowledged()
             if (lateAck) return lateAck
             await rm(request, { force: true })
-            return { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { status: "not_running" } }
+            return { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { ...metadata, status: "not_running" } }
           }
           await new Promise((resolve) => setTimeout(resolve, pollMs))
         }
-        return { content: [{ type: "text" as const, text: "Acknowledgement timed out; delivery is unconfirmed and message may still be queued" }], details: { status: "error" } }
+        return { content: [{ type: "text" as const, text: "Acknowledgement timed out; delivery is unconfirmed and message may still be queued" }], details: { ...metadata, status: "error" } }
       } catch (error) {
-        return { content: [{ type: "text" as const, text: `${String(error)}; message may still be pending` }], details: { status: "error" } }
+        return { content: [{ type: "text" as const, text: `${String(error)}; message may still be pending` }], details: { ...metadata, status: "error" } }
       }
     },
   })
 
   pi.registerTool({
     name: "background_agent",
+    ...backgroundToolRenderers("background_agent"),
     label: "Background agent",
     description:
       "Delegate a task to an inspectable Pi agent in its own tmux session. Returns immediately; the parent automatically receives a completion notification when the initial task settles.",
@@ -507,7 +512,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
             text: `Started background agent: ${label}\nAgent ID: ${id}\nModel: ${model} (${thinking})\nExpected completion: ${params.expectedCompletionMinutes} minutes`,
           },
         ],
-        details: { id, label, target, statusFile, expectedCompletionAt },
+        details: { id, label, target, attach: backgroundAttachCommand({ id, target }), statusFile, expectedCompletionAt },
       }
     },
   })

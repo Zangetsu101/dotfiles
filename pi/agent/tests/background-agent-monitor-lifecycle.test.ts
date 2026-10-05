@@ -37,7 +37,7 @@ for (const outcome of ["settled", "exit"] as const) test(outcome === "settled"
     on(name: string, handler: (event: any, ctx: any) => Promise<void> | void) {
       handlers.set(name, [...(handlers.get(name) ?? []), handler])
     },
-    registerTool() {}, registerCommand() {},
+    registerMessageRenderer() {}, registerTool() {}, registerCommand() {},
     sendMessage(message: unknown) { messages.push(message) },
   }
   const ctx = { cwd: directory, sessionManager: { getSessionId: () => directory, getSessionFile: () => join(directory, "session.jsonl"), getBranch: () => [] } }
@@ -56,6 +56,10 @@ for (const outcome of ["settled", "exit"] as const) test(outcome === "settled"
     completed = true
     await writeFile(agent.statusFile, JSON.stringify(completion))
     await waitFor(() => messages.length === 1)
+    const sent = messages[0] as { content: string; details: { output: string; status: string } }
+    assert.match(sent.content, /Review the result and report it to the user\.$/)
+    assert.equal(sent.details.output, "done")
+    assert.equal(sent.details.status, outcome === "exit" ? "failed" : "completed")
     const afterCompletion = claims
     await pause(60)
     assert.equal(claims, afterCompletion, "settled agent must not keep polling")

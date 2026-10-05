@@ -22,7 +22,7 @@ async function withTmuxEnvironment(run: () => Promise<void>) {
   }
 }
 
-async function withSteerableChild(run: (parent: FakePiRuntime, child: FakePiRuntime, id: string) => Promise<void>) {
+async function withSteerableChild(run: (parent: FakePiRuntime, child: FakePiRuntime, id: string, target: string) => Promise<void>) {
   await withTmuxEnvironment(async () => {
     const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
     const parent = new FakePiRuntime({ sessionId: "steering" })
@@ -37,17 +37,21 @@ async function withSteerableChild(run: (parent: FakePiRuntime, child: FakePiRunt
       else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previous
     }
     await child.emit("session_start", { reason: "startup" })
-    try { await run(parent, child, agent.details.id) } finally {
+    try { await run(parent, child, agent.details.id, agent.details.target) } finally {
       await child.emit("session_shutdown")
       await parent.emit("session_shutdown")
     }
   })
 }
 
-test("a running child receives a steer in its Pi conversation and acknowledges delivery", async () => withSteerableChild(async (parent, child, id) => {
+test("a running child receives a steer in its Pi conversation and acknowledges delivery", async () => withSteerableChild(async (parent, child, id, target) => {
   await child.emit("agent_start")
   const result = await parent.execute("background_agent_message", { id, message: "Check the edge case" })
   assert.equal(result.details.status, "delivered")
+  assert.equal(result.details.id, id)
+  assert.equal(result.details.label, "review")
+  assert.equal(result.details.target, target)
+  assert.equal(result.details.attach, `/task attach ${id}`)
   assert.deepEqual(child.userMessages, [{ text: "Check the edge case", options: { deliverAs: "steer" } }])
 }))
 
@@ -68,9 +72,17 @@ test("messages cannot address other task families or settled agents", async () =
   assert.equal(missing.details.status, "not_found")
   assert.match(missing.content[0].text, /not found in this task subtree/)
   assert.equal((await parent.execute("background_agent_message", { id: "mun?", message: "no" })).details.status, "not_found")
-  assert.equal((await parent.execute("background_agent_message", { id: agent.details.id, message: "  " })).details.status, "error")
+  const empty = await parent.execute("background_agent_message", { id: agent.details.id, message: "  " })
+  assert.equal(empty.details.status, "error")
   await tmux.complete(agent.details.target, "completed", "done")
-  assert.equal((await parent.execute("background_agent_message", { id: agent.details.id, message: "too late" })).details.status, "not_running")
+  const settled = await parent.execute("background_agent_message", { id: agent.details.id, message: "too late" })
+  assert.equal(settled.details.status, "not_running")
+  for (const result of [empty, settled]) {
+    assert.equal(result.details.id, agent.details.id)
+    assert.equal(result.details.label, agent.details.label)
+    assert.equal(result.details.target, agent.details.target)
+    assert.equal(result.details.attach, `/task attach ${agent.details.id}`)
+  }
   await parent.emit("session_shutdown")
 }))
 
@@ -93,6 +105,12 @@ test("the parent can inspect, reschedule, and terminate its monitor by ID", asyn
     assert.equal((await runtime.execute("background_task", { action: "inspect", id: foreign.id })).details.status, "out_of_scope")
     const terminate = await runtime.execute("background_task", { action: "terminate", id })
     assert.equal(terminate.details.status, "terminated")
+    for (const result of [inspect, recheck, terminate]) {
+      assert.equal(result.details.id, id)
+      assert.equal(result.details.label, monitor.details.label)
+      assert.equal(result.details.target, monitor.details.target)
+      assert.equal(result.details.attach, `/task attach ${id}`)
+    }
   } finally { await runtime.emit("session_shutdown", { reason: "reload" }) }
 }))
 

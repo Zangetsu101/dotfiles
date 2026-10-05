@@ -1,25 +1,39 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { EventEmitter } from "node:events"
-import { access, mkdtemp, readFile } from "node:fs/promises"
+import { access, mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { promisify } from "node:util"
 import backgroundAgentExtension from "../extensions/background-agent.ts"
 import backgroundMonitorExtension from "../extensions/background-monitor.ts"
+import { BackgroundTasks, type TmuxProcessAdapter } from "../extensions/lib/background-task.ts"
 
 type Handler = (...args: any[]) => any
 
 const execFileAsync = promisify(execFile)
 
-test("a child agent waits for nested background monitors before reporting completion", async () => {
+test("a child agent waits for nested background monitors before reporting completion", { timeout: 10_000 }, async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "pi-background-agent-test-"))
   const statusFile = join(directory, "completion.json")
-  const previousStatusFile = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
-  const previousTmuxPane = process.env.TMUX_PANE
+  const socket = `pi-nested-monitor-test-${process.pid}-${Date.now()}`
+  const tmux: TmuxProcessAdapter = {
+    async run(args) {
+      return (await execFileAsync("tmux", ["-L", socket, "-f", "/dev/null", ...args], { encoding: "utf8" })).stdout.trim()
+    },
+  }
+  const tasks = new BackgroundTasks(tmux)
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith("PI_BACKGROUND_") || key === "TMUX" || key === "TMUX_PANE"))
+  for (const key of Object.keys(inherited)) delete process.env[key]
   process.env.PI_BACKGROUND_AGENT_STATUS_FILE = statusFile
   process.env.TMUX_PANE = "%isolated-nested-monitor-test"
+  t.after(async () => {
+    await tmux.run(["kill-server"]).catch(() => undefined)
+    for (const key of Object.keys(process.env)) if (key.startsWith("PI_BACKGROUND_") || key === "TMUX" || key === "TMUX_PANE") delete process.env[key]
+    Object.assign(process.env, inherited)
+    await rm(directory, { recursive: true, force: true })
+  })
 
   const handlers = new Map<string, Handler[]>()
   const tools = new Map<string, any>()
@@ -30,7 +44,6 @@ test("a child agent waits for nested background monitors before reporting comple
   }> = []
   const eventBus = new EventEmitter()
   let finalOutput = "Research is still running."
-  const taskTargets: string[] = []
 
   const waitForMessage = (text: string) => {
     if (messages.some((message) => message.content.includes(text))) return Promise.resolve()
@@ -47,6 +60,7 @@ test("a child agent waits for nested background monitors before reporting comple
       handlers.set(name, registered)
     },
     registerCommand() {},
+    registerMessageRenderer() {},
     registerTool(tool: any) {
       tools.set(tool.name, tool)
     },
@@ -79,8 +93,8 @@ test("a child agent waits for nested background monitors before reporting comple
   }
 
   try {
-    await backgroundAgentExtension(pi)
-    backgroundMonitorExtension(pi)
+    await backgroundAgentExtension(pi, { tasks, tmux })
+    backgroundMonitorExtension(pi, { tasks })
 
     const monitor = tools.get("background_monitor")
     assert.ok(monitor, "background_monitor should be registered")
@@ -92,7 +106,7 @@ test("a child agent waits for nested background monitors before reporting comple
       undefined,
       ctx,
     )
-    taskTargets.push(fastTask.details.target)
+    assert.ok(fastTask.details.target)
     const slowTask = await monitor.execute(
       "slow-monitor-call",
       { command: "sleep 0.4; printf slow-finished", label: "slow nested research", expectedRunningMinutes: 1 },
@@ -100,7 +114,7 @@ test("a child agent waits for nested background monitors before reporting comple
       undefined,
       ctx,
     )
-    taskTargets.push(slowTask.details.target)
+    assert.ok(slowTask.details.target)
 
     await emit("agent_settled")
     await assert.rejects(access(statusFile), { code: "ENOENT" })
@@ -120,10 +134,5 @@ test("a child agent waits for nested background monitors before reporting comple
     assert.equal(messages.length, 2)
   } finally {
     await emit("session_shutdown")
-    await Promise.all(taskTargets.map((target) => execFileAsync("tmux", ["kill-pane", "-t", target]).catch(() => undefined)))
-    if (previousStatusFile === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
-    else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousStatusFile
-    if (previousTmuxPane === undefined) delete process.env.TMUX_PANE
-    else process.env.TMUX_PANE = previousTmuxPane
   }
 })

@@ -16,7 +16,7 @@ for (const maxDepth of [1, 3]) test(`background agents respect a configured maxi
     const tools: string[] = []
     await backgroundAgentExtension({
       events: new EventEmitter(), on() {}, registerCommand() {},
-      registerTool(tool: { name: string }) { tools.push(tool.name) },
+      registerMessageRenderer() {}, registerTool(tool: { name: string }) { tools.push(tool.name) },
       getThinkingLevel() { return "medium" },
     } as any)
     return tools
@@ -52,6 +52,7 @@ test("generic background task metadata does not turn Pi into an agent child brid
       events: { on() {} },
       on() {},
       registerCommand() {},
+      registerMessageRenderer() {},
       registerTool(tool: { name: string }) { tools.push(tool.name) },
       getThinkingLevel() { return "medium" },
     } as any)

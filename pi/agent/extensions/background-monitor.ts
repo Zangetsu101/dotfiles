@@ -5,6 +5,8 @@ import { BACKGROUND_TASK_CREATED, BACKGROUND_TASK_REMOVED, BACKGROUND_TASK_STATU
 import { FAMILY_ENTRY, familyForContext, familyTaskParent, type TaskFamily } from "./lib/background-family.ts"
 import { taskCheckIns } from "./lib/task-check-in.ts"
 import { notifyRunningTask, readOutputTail } from "./lib/background-task-check-in.ts"
+import { backgroundAttachCommand } from "./lib/background-attach.ts"
+import { backgroundToolRenderers, registerBackgroundMessages } from "./lib/background-rendering.ts"
 
 const MAX_OUTPUT_CHARS = 50_000
 const POLL_MS = 100
@@ -68,6 +70,7 @@ type BackgroundMonitorOptions = {
 }
 
 export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {}) {
+  registerBackgroundMessages(pi, "monitor")
   const tasks = options.tasks ?? new BackgroundTasks()
   const pollMs = options.pollMs ?? POLL_MS
   const checkIns = options.checkIns ?? taskCheckIns
@@ -154,10 +157,10 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
           ? `failed with exit code ${completion.exitCode ?? "unknown"}`
           : `finished with exit code ${completion.exitCode ?? 0}`
       const summary = `Background monitor ${task.id} (${task.label}) ${status}.`
-      const attach = process.env.TMUX ? `/task attach ${task.id}` : `tmux attach -t ${task.target}`
+      const attach = backgroundAttachCommand(task)
       if (removedTasks.has(task.id)) return
       if (ctx.hasUI) ctx.ui.notify(summary, failed ? "error" : "info")
-      pi.sendMessage({ customType: "background-monitor", content: `${summary}\nAttach with: ${attach}\n\nOutput:\n${output.trim() || "(no output)"}\n\nReview the result. When all background work has returned, provide the complete standalone result in your final turn, including any conclusions that remain unchanged.`, display: true }, { deliverAs: "followUp", triggerTurn: true })
+      pi.sendMessage({ customType: "background-monitor", details: { summary, label: task.label, status: completion.status === "cancelled" ? "terminated" : completion.status, id: task.id, target: task.target, output: output.trim() || "(no output)", attach, exitCode: completion.exitCode }, content: `${summary}\nAttach with: ${attach}\n\nOutput:\n${output.trim() || "(no output)"}\n\nReview the result. When all background work has returned, provide the complete standalone result in your final turn, including any conclusions that remain unchanged.`, display: true }, { deliverAs: "followUp", triggerTurn: true })
     }
     const launchConsume = () => {
       const pending = consume()
@@ -212,6 +215,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
 
   pi.registerTool({
     name: "background_monitor",
+    ...backgroundToolRenderers("background_monitor"),
     label: "Background monitor",
     description: "Run a slow, finite shell command asynchronously in an inspectable tmux task. Wake the parent at the expected duration if still running, and on exit with status and bounded output.",
     promptSnippet: "Run slow, finite shell commands asynchronously in inspectable tmux tasks",
@@ -228,13 +232,14 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       pi.events.emit(BACKGROUND_TASK_CREATED, task)
       await checkIns.schedule(task.statusFile, now() + params.expectedRunningMinutes * millisecondsPerMinute)
       monitor(task, ctx)
-      const attach = process.env.TMUX ? `/task attach ${task.id}` : `tmux attach -t ${task.target}`
-      return { content: [{ type: "text", text: `Started background monitor: ${label}\nTask: ${task.id}\nExpected running time: ${params.expectedRunningMinutes} minutes\nTmux target: ${task.target}\nAttach with: ${attach}` }], details: { id: task.id, label, target: task.target, statusFile: task.statusFile } }
+      const attach = backgroundAttachCommand(task)
+      return { content: [{ type: "text", text: `Started background monitor: ${label}\nTask: ${task.id}\nExpected running time: ${params.expectedRunningMinutes} minutes\nTmux target: ${task.target}\nAttach with: ${attach}` }], details: { id: task.id, label, target: task.target, attach, statusFile: task.statusFile } }
     },
   })
 
   pi.registerTool({
     name: "background_task",
+    ...backgroundToolRenderers("background_task"),
     label: "Background task",
     description: "List, inspect, schedule another check-in for, or terminate a task in your subtree.",
     parameters: Type.Object({
@@ -255,21 +260,23 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
         const elsewhere = (await tasks.list({ familyId: family!.familyId })).some((candidate) => candidate.id === params.id)
         return { content: [{ type: "text" as const, text: elsewhere ? "Task is outside your subtree." : "Task not found. Use background_task with action list to see available tasks." }], details: { status: elsewhere ? "out_of_scope" : "not_found" } }
       }
+      const metadata = { id: task.id, label: task.label, target: task.target, attach: backgroundAttachCommand(task) }
       if (params.action === "inspect") {
         const output = await readOutputTail(task.outputFile)
         const completion = await tasks.completion(task)
         const status = completion ? "status" in completion ? completion.status : completion.kind === "exit" ? "failed" : "succeeded" : task.status
-        return { content: [{ type: "text" as const, text: `${task.kind} ${task.id} (${task.label}): ${status}\nRecent output:\n${output.trim() || "(no output)"}` }], details: { status } }
+        const attach = backgroundAttachCommand(task)
+        return { content: [{ type: "text" as const, text: `${task.kind} ${task.id} (${task.label}): ${status}\nRecent output:\n${output.trim() || "(no output)"}` }], details: { status, id: task.id, label: task.label, target: task.target, attach, output: output.trim() || "(no output)" } }
       }
-      if (task.status !== "running" || await tasks.completion(task)) return { content: [{ type: "text" as const, text: `Task ${task.id} is no longer running.` }], details: { status: "not_running" } }
+      if (task.status !== "running" || await tasks.completion(task)) return { content: [{ type: "text" as const, text: `Task ${task.id} is no longer running.` }], details: { ...metadata, status: "not_running" } }
       if (params.action === "terminate") {
         await terminateTask(task, "Terminated by parent agent")
-        return { content: [{ type: "text" as const, text: `Terminated task ${task.id}.` }], details: { status: "terminated" } }
+        return { content: [{ type: "text" as const, text: `Terminated task ${task.id}.` }], details: { ...metadata, status: "terminated" } }
       }
-      if (task.parentId !== family!.nodeId) return { content: [{ type: "text" as const, text: "Only the agent that spawned this task can schedule its check-ins." }], details: { status: "out_of_scope" } }
-      if (!params.afterMinutes) return { content: [{ type: "text" as const, text: "afterMinutes is required to schedule a check-in." }], details: { status: "error" } }
+      if (task.parentId !== family!.nodeId) return { content: [{ type: "text" as const, text: "Only the agent that spawned this task can schedule its check-ins." }], details: { ...metadata, status: "out_of_scope" } }
+      if (!params.afterMinutes) return { content: [{ type: "text" as const, text: "afterMinutes is required to schedule a check-in." }], details: { ...metadata, status: "error" } }
       await checkIns.schedule(task.statusFile, now() + params.afterMinutes * millisecondsPerMinute)
-      return { content: [{ type: "text" as const, text: `Scheduled a check-in for ${task.id} in ${params.afterMinutes} minutes.` }], details: { status: "scheduled" } }
+      return { content: [{ type: "text" as const, text: `Scheduled a check-in for ${task.id} in ${params.afterMinutes} minutes.` }], details: { ...metadata, status: "scheduled" } }
     },
   })
 

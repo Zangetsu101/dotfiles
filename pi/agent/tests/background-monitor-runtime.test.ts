@@ -76,7 +76,7 @@ function runtime(shared: SharedTasks, confirmations: boolean[] = [], subtreeRoot
   const pi = {
     events,
     on(name: string, handler: Handler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]) },
-    registerTool() {}, registerCommand(name: string, command: any) { commands.set(name, command) },
+    registerMessageRenderer() {}, registerTool() {}, registerCommand(name: string, command: any) { commands.set(name, command) },
     sendMessage(message: any) { messages.push(message) },
   } as any
   const ctx = {
@@ -158,6 +158,10 @@ test("reload hands a running monitor to the replacement runtime and reports its 
   assert.equal(outgoing.messages.length, 0)
   assert.deepEqual(outgoing.activity.finished, ["background-monitor:one"])
   assert.match(replacement.messages[0].content, /finished with exit code 0/)
+  assert.match(replacement.messages[0].content, /Review the result\. When all background work has returned, provide the complete standalone result/)
+  assert.equal(replacement.messages[0].details.status, "completed")
+  assert.equal(replacement.messages[0].details.exitCode, 0)
+  assert.equal(replacement.messages[0].details.output, "(no output)")
   assert.deepEqual(replacement.activity.started, ["background-monitor:one"])
   assert.deepEqual(replacement.activity.finished, ["background-monitor:one"])
 })
