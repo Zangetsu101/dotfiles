@@ -29,18 +29,18 @@ function readPackage(path) {
 const localPackage = readPackage(join(agentDir, "package.json"))
 const globalPiDir = join(globalModulesDir, PI_PACKAGE)
 const globalPi = readPackage(join(globalPiDir, "package.json"))
-const globalTypebox = readPackage(join(globalPiDir, "node_modules", "typebox", "package.json"))
-
-const expected = {
-  [PI_PACKAGE]: globalPi.version,
-  typebox: globalTypebox.version,
+const expected = { [PI_PACKAGE]: globalPi.version }
+for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-tui", "typebox"]) {
+  expected[name] = readPackage(join(globalPiDir, "node_modules", name, "package.json")).version
 }
 
 if (process.argv.includes("--check")) {
-  const installed = {
-    [PI_PACKAGE]: readPackage(join(agentDir, "node_modules", PI_PACKAGE, "package.json")).version,
-    typebox: readPackage(join(agentDir, "node_modules", "typebox", "package.json")).version,
-  }
+  const installed = Object.fromEntries(
+    Object.keys(expected).map((name) => [
+      name,
+      readPackage(join(agentDir, "node_modules", name, "package.json")).version,
+    ]),
+  )
   const mismatches = Object.entries(expected).filter(
     ([name, version]) =>
       localPackage.dependencies?.[name] !== version || installed[name] !== version,
@@ -64,8 +64,7 @@ const result = spawnSync(
   [
     "install",
     "--save-exact",
-    `${PI_PACKAGE}@${expected[PI_PACKAGE]}`,
-    `typebox@${expected.typebox}`,
+    ...Object.entries(expected).map(([name, version]) => `${name}@${version}`),
   ],
   { cwd: agentDir, stdio: "inherit" },
 )
