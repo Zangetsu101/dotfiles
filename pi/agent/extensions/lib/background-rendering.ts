@@ -1,4 +1,5 @@
 import { keyText, type ExtensionAPI, type MessageRenderer, type ToolRenderers } from "@earendil-works/pi-coding-agent"
+import { describeAgentProgress, type AgentProgress } from "./background-progress.ts"
 import { Text } from "@earendil-works/pi-tui"
 
 export type BackgroundMessageDetails = {
@@ -6,7 +7,8 @@ export type BackgroundMessageDetails = {
   status: string
   id: string
   target: string
-  output: string
+  output?: string
+  progress?: AgentProgress
   attach: string
   exitCode?: number
   elapsed?: string
@@ -49,7 +51,7 @@ export function backgroundToolRenderers(name: string): ToolRenderers {
       const target = string(details.target)
       const attach = string(details.attach) || textContent(result.content).match(/^Attach with: (.+)$/m)?.[1] || (target ? `tmux attach -t ${target}` : "")
       const extra = [id && `Task: ${id}`, target && `Tmux target: ${target}`, attach && `Attach: ${attach}`].filter(Boolean).join("\n")
-      const output = typeof details.output === "string" ? details.output : textContent(result.content)
+      const output = details.progress ? textContent(result.content) : typeof details.output === "string" ? details.output : textContent(result.content)
       const body = options.expanded ? [output, extra].filter(Boolean).join("\n\n") : ""
       return themedText(() => theme.fg(context.isError || status === "error" ? "error" : options.isPartial ? "warning" : "muted", heading) + theme.fg("muted", expandHint(options.expanded)) + (body ? `\n${theme.fg("toolOutput", body)}` : ""))
     },
@@ -70,14 +72,15 @@ function legacyBody(content: string, type: string): string {
 export const backgroundMessageRenderer: MessageRenderer<BackgroundMessageDetails> = (message, options, theme) => {
   const details = record(message.details)
   const raw = textContent(message.content)
-  const structured = typeof details.label === "string" && typeof details.status === "string" && typeof details.output === "string"
+  const progress = details.progress as AgentProgress | undefined
+  const structured = typeof details.label === "string" && typeof details.status === "string" && (typeof details.output === "string" || Boolean(progress))
   const checkIn = message.customType.endsWith("check-in")
   const name = checkIn ? "background check-in" : message.customType.replaceAll("-", "_")
   const status = string(details.status)
   const heading = structured
-    ? `${name} · ${inline(string(details.label))} · ${status}${typeof details.exitCode === "number" ? ` · exit ${details.exitCode}` : ""}${details.elapsed ? ` · ${inline(string(details.elapsed))}` : ""}`
+    ? `${name} · ${inline(string(details.label))} · ${status}${typeof details.exitCode === "number" ? ` · exit ${details.exitCode}` : ""}${details.elapsed ? ` · ${inline(string(details.elapsed))}` : ""}${progress ? ` · ${inline(describeAgentProgress(progress))}` : ""}`
     : `${name} · ${inline(raw.split("\n")[0] || "result")}`
-  const body = structured ? [string(details.summary), string(details.output), `Task: ${string(details.id)}`, `Tmux target: ${string(details.target)}`, string(details.attach) && `Attach: ${string(details.attach)}`].filter(Boolean).join("\n\n") : legacyBody(raw, message.customType)
+  const body = structured ? [string(details.summary), progress && describeAgentProgress(progress), string(details.output), `Task: ${string(details.id)}`, `Tmux target: ${string(details.target)}`, string(details.attach) && `Attach: ${string(details.attach)}`].filter(Boolean).join("\n\n") : legacyBody(raw, message.customType)
   return themedText(() => theme.fg(status === "failed" || status === "terminated" ? "error" : checkIn ? "warning" : "success", heading) + theme.fg("muted", expandHint(options.expanded)) + (options.expanded ? `\n${theme.fg("toolOutput", body)}` : ""))
 }
 

@@ -14,6 +14,7 @@ export type TaskKind = "monitor" | "agent"
 export type TaskStatus = "running" | "succeeded" | "failed" | "terminated" | "interrupted"
 export type TaskQuery = { familyId: string } | { subtreeRootId: string }
 export type BackgroundTask = {
+  progress?: import("./background-progress.ts").AgentProgress
   id: string
   familyId?: string
   rootId?: string
@@ -40,7 +41,10 @@ export type TaskCompletion = {
   reason?: string
 }
 export type AgentTaskCompletion = {
-  kind: "settled" | "exit"
+  kind: "settled" | "exit" | "reported"
+  outcome?: "completed" | "failed"
+  assignment?: string
+  reason?: string
   output?: string
   exitCode?: number
   stopReason?: string
@@ -222,7 +226,7 @@ export class BackgroundTasks {
         const statusFile = join(directory, "completion.json")
         const outputFile = join(directory, "output.log")
         const environment = Object.entries({ PI_BACKGROUND_TASK_STATUS_FILE: statusFile, PI_BACKGROUND_TASK_PARENT: input.parentTarget ?? input.parent ?? rootPane, PI_BACKGROUND_TASK_PARENT_ID: parentId, PI_BACKGROUND_TASK_FAMILY_ID: familyId, PI_BACKGROUND_TASK_FAMILY_NAME: input.familyName ?? familyId, PI_BACKGROUND_TASK_ROOT_ID: rootId, PI_BACKGROUND_TASK_ROOT_PANE: rootPane, PI_BACKGROUND_TASK_ID: id, PI_BACKGROUND_TASK_LABEL: input.label, ...(input.statusFileEnv ? { [input.statusFileEnv]: statusFile } : {}), ...(input.env ?? {}) }).flatMap(([key, value]) => ["-e", `${key}=${value}`])
-        const wrapper = ['status="$1"; output="$2"; ready="$3"; shift 3', 'tmux wait-for "$ready"', '"$@"', 'code=$?', 'state=completed; [ "$code" -eq 0 ] || state=failed', 'if [ ! -e "$status" ]; then', '  printf \'{"status":"%s","exitCode":%s}\\n\' "$state" "$code" > "$status.tmp"', '  mv "$status.tmp" "$status"', 'fi', input.interactiveAfterExit ? 'exec "${SHELL:-/bin/bash}" -l' : 'exit "$code"'].join("\n")
+        const wrapper = ['status="$1"; output="$2"; ready="$3"; shift 3', 'tmux wait-for "$ready"', '"$@"', 'code=$?', 'state=completed; [ "$code" -eq 0 ] || state=failed', input.kind === "agent" ? 'printf \'{"kind":"exit","exitCode":%s}\\n\' "$code" > "$status.tmp"; mv "$status.tmp" "$status"' : 'if [ ! -e "$status" ]; then printf \'{"status":"%s","exitCode":%s}\\n\' "$state" "$code" > "$status.tmp"; mv "$status.tmp" "$status"; fi', input.interactiveAfterExit ? 'exec "${SHELL:-/bin/bash}" -l' : 'exit "$code"'].join("\n")
         if (input.kind === "agent") {
           startedAt = Date.now()
           target = await this.tmux.run(["new-window", "-d", "-P", "-F", "#{window_id}", "-t", session, "-n", displayName, "-c", input.cwd, ...environment, "/bin/bash", "-c", wrapper, "background-task", statusFile, outputFile, ready, input.command, ...input.args])
@@ -535,7 +539,8 @@ export class BackgroundTasks {
     const completion = await this.completion(task)
     if (!completion) return undefined
     try {
-      const claim = await open(`${task.statusFile}.notified`, "wx", 0o600)
+      const marker = "kind" in completion && completion.kind === "exit" ? `${task.statusFile}.runtime-notified` : `${task.statusFile}.notified`
+      const claim = await open(marker, "wx", 0o600)
       await claim.close()
       return completion
     } catch {

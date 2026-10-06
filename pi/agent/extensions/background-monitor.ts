@@ -1,3 +1,4 @@
+import { readAgentProgress, describeAgentProgress } from "./lib/background-progress.ts"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 import { BACKGROUND_ACTIVITY_FINISHED, BACKGROUND_ACTIVITY_STARTED, type BackgroundActivity } from "./lib/background-activity.ts"
@@ -286,15 +287,16 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       }
       const metadata = { id: task.id, label: task.label, target: task.target, attach: backgroundAttachCommand(task) }
       if (params.action === "inspect") {
+        const progress = task.kind === "agent" ? await readAgentProgress(task.statusFile) : undefined
         const completion = await tasks.completion(task)
-        const settledAgent = task.kind === "agent" && completion && "kind" in completion && completion.kind === "settled"
+        const settledAgent = task.kind === "agent" && completion && "kind" in completion && completion.kind !== "exit"
         const output = settledAgent
           ? completion.output?.trim() || "(no final output)"
           : (await readOutputTail(task.outputFile)).trim() || "(no output)"
-        const status = completion ? "status" in completion ? completion.status : completion.kind === "exit" ? "failed" : "succeeded" : task.status
+        const status = completion ? "status" in completion ? completion.status : completion.kind === "exit" || completion.outcome === "failed" ? "failed" : "succeeded" : task.status
         const attach = backgroundAttachCommand(task)
         const heading = settledAgent ? "Final output" : "Recent output"
-        return { content: [{ type: "text" as const, text: `${task.kind} ${task.id} (${task.label}): ${status}\n${heading}:\n${output}` }], details: { status, id: task.id, label: task.label, target: task.target, attach, output } }
+        return { content: [{ type: "text" as const, text: `${task.kind} ${task.id} (${task.label}): ${status}\n${progress ? `Reported progress: ${describeAgentProgress(progress)}\nRecent history:\n${progress.history.map((report) => `${new Date(report.at).toISOString()} ${report.state}: ${report.activity}${report.help ? `; help: ${report.help}` : ""}`).join("\n")}\n` : ""}${heading}:\n${output}` }], details: { status, id: task.id, label: task.label, target: task.target, attach, output, progress } }
       }
       if (task.status !== "running" || await tasks.completion(task)) return { content: [{ type: "text" as const, text: `Task ${task.id} is no longer running.` }], details: { ...metadata, status: "not_running" } }
       if (params.action === "terminate") {

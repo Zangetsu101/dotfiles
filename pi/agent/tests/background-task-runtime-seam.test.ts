@@ -61,7 +61,7 @@ test("an idle child accepts a message without steering an active turn", async ()
   assert.deepEqual(child.userMessages, [{ text: "Use the account currency", options: undefined }])
 }))
 
-test("messages cannot address other task families or settled agents", async () => withTmuxEnvironment(async () => {
+test("messages cannot address other task families or exited agents", async () => withTmuxEnvironment(async () => {
   const tmux = new FakeTmuxProcessAdapter(); const tasks = new BackgroundTasks(tmux)
   const parent = new FakePiRuntime({ sessionId: "steer-boundary" })
   await backgroundAgentExtension(parent.pi, { tasks, tmux, pollMs: 5 }); await parent.emit("session_start", { reason: "startup" })
@@ -74,7 +74,7 @@ test("messages cannot address other task families or settled agents", async () =
   assert.equal((await parent.execute("background_agent_message", { id: "mun?", message: "no" })).details.status, "not_found")
   const empty = await parent.execute("background_agent_message", { id: agent.details.id, message: "  " })
   assert.equal(empty.details.status, "error")
-  await tmux.complete(agent.details.target, "completed", "done")
+  await tmux.complete(agent.details.target, "failed", "crashed")
   const settled = await parent.execute("background_agent_message", { id: agent.details.id, message: "too late" })
   assert.equal(settled.details.status, "not_running")
   for (const result of [empty, settled]) {
