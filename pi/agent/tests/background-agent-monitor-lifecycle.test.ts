@@ -32,6 +32,8 @@ for (const outcome of ["settled", "exit"] as const) test(outcome === "settled"
     claimCompletionOrReconcile: async () => { claims++; if (!completed || claimed) return undefined; claimed = true; return completion },
     completion: async () => completed ? completion : undefined,
     setStatus: async () => {},
+    isPresent: async () => true,
+    pendingAssignmentCompletionPath: async () => undefined,
   }
   const handlers = new Map<string, Array<(event: any, ctx: any) => Promise<void> | void>>()
   const messages: unknown[] = []

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { mkdir, mkdtemp, open, readFile, rename, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, open, readFile, readdir, rename, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
@@ -14,6 +14,7 @@ export type TaskKind = "monitor" | "agent"
 export type TaskStatus = "running" | "succeeded" | "failed" | "terminated" | "interrupted"
 export type TaskQuery = { familyId: string } | { subtreeRootId: string }
 export type BackgroundTask = {
+  progress?: import("./background-progress.ts").AgentProgress
   id: string
   familyId?: string
   rootId?: string
@@ -40,12 +41,19 @@ export type TaskCompletion = {
   reason?: string
 }
 export type AgentTaskCompletion = {
-  kind: "settled" | "exit"
+  kind: "settled" | "exit" | "reported"
+  outcome?: "completed" | "failed"
+  assignment?: string
+  reason?: string
   output?: string
   exitCode?: number
   stopReason?: string
 }
 export type TaskCompletionRecord = TaskCompletion | AgentTaskCompletion
+export function taskCompletionStatus(completion: TaskCompletionRecord): TaskStatus {
+  if ("kind" in completion) return completion.kind === "exit" || completion.stopReason === "error" || completion.outcome === "failed" ? "failed" : "succeeded"
+  return completion.status === "cancelled" ? "terminated" : completion.status === "failed" ? "failed" : "succeeded"
+}
 export interface TmuxProcessAdapter {
   run(args: string[]): Promise<string>
 }
@@ -68,6 +76,11 @@ function shellQuote(value: string): string {
 }
 export async function writeTaskCompletion(path: string, completion: TaskCompletionRecord): Promise<void> {
   await writeAtomic(path, JSON.stringify(completion))
+  if ("kind" in completion && completion.assignment) {
+    await mkdir(`${path}.assignments`, { recursive: true, mode: 0o700 })
+    const name = `${process.hrtime.bigint().toString().padStart(20, "0")}-${completion.assignment}.json`
+    await writeAtomic(join(`${path}.assignments`, name), JSON.stringify(completion))
+  }
 }
 
 async function writeAtomic(path: string, contents: string): Promise<void> {
@@ -222,7 +235,7 @@ export class BackgroundTasks {
         const statusFile = join(directory, "completion.json")
         const outputFile = join(directory, "output.log")
         const environment = Object.entries({ PI_BACKGROUND_TASK_STATUS_FILE: statusFile, PI_BACKGROUND_TASK_PARENT: input.parentTarget ?? input.parent ?? rootPane, PI_BACKGROUND_TASK_PARENT_ID: parentId, PI_BACKGROUND_TASK_FAMILY_ID: familyId, PI_BACKGROUND_TASK_FAMILY_NAME: input.familyName ?? familyId, PI_BACKGROUND_TASK_ROOT_ID: rootId, PI_BACKGROUND_TASK_ROOT_PANE: rootPane, PI_BACKGROUND_TASK_ID: id, PI_BACKGROUND_TASK_LABEL: input.label, ...(input.statusFileEnv ? { [input.statusFileEnv]: statusFile } : {}), ...(input.env ?? {}) }).flatMap(([key, value]) => ["-e", `${key}=${value}`])
-        const wrapper = ['status="$1"; output="$2"; ready="$3"; shift 3', 'tmux wait-for "$ready"', '"$@"', 'code=$?', 'state=completed; [ "$code" -eq 0 ] || state=failed', 'if [ ! -e "$status" ]; then', '  printf \'{"status":"%s","exitCode":%s}\\n\' "$state" "$code" > "$status.tmp"', '  mv "$status.tmp" "$status"', 'fi', input.interactiveAfterExit ? 'exec "${SHELL:-/bin/bash}" -l' : 'exit "$code"'].join("\n")
+        const wrapper = ['status="$1"; output="$2"; ready="$3"; shift 3', 'tmux wait-for "$ready"', '"$@"', 'code=$?', 'state=completed; [ "$code" -eq 0 ] || state=failed', input.kind === "agent" ? 'if ! grep -q \'"status"[[:space:]]*:[[:space:]]*"cancelled"\' "$status" 2>/dev/null; then printf \'{"kind":"exit","exitCode":%s}\\n\' "$code" > "$status.tmp"; mv "$status.tmp" "$status"; fi' : 'if [ ! -e "$status" ]; then printf \'{"status":"%s","exitCode":%s}\\n\' "$state" "$code" > "$status.tmp"; mv "$status.tmp" "$status"; fi', input.interactiveAfterExit ? 'exec "${SHELL:-/bin/bash}" -l' : 'exit "$code"'].join("\n")
         if (input.kind === "agent") {
           startedAt = Date.now()
           target = await this.tmux.run(["new-window", "-d", "-P", "-F", "#{window_id}", "-t", session, "-n", displayName, "-c", input.cwd, ...environment, "/bin/bash", "-c", wrapper, "background-task", statusFile, outputFile, ready, input.command, ...input.args])
@@ -531,11 +544,40 @@ export class BackgroundTasks {
     return this.claimCompletionRecord(task) as Promise<TaskCompletion | undefined>
   }
 
+  async pendingAssignmentCompletionPath(task: Pick<BackgroundTask, "statusFile">): Promise<string | undefined> {
+    const directory = `${task.statusFile}.assignments`
+    const files = await readdir(directory).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return [] as string[]
+      throw error
+    })
+    for (const name of files.filter((name) => name.endsWith(".json")).sort()) {
+      const path = join(directory, name)
+      try { await readFile(`${path}.notified`); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return path
+        throw error
+      }
+    }
+    return undefined
+  }
+
   async claimCompletionRecord(task: Pick<BackgroundTask, "statusFile">): Promise<TaskCompletionRecord | undefined> {
     const completion = await this.completion(task)
+    const pending = await this.pendingAssignmentCompletionPath(task)
+    if (pending) {
+      const completion = JSON.parse(await readFile(pending, "utf8")) as AgentTaskCompletion
+      try {
+        const claim = await open(`${pending}.notified`, "wx", 0o600)
+        await claim.close()
+        return completion
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+      }
+    }
+    if (completion && "kind" in completion && completion.assignment) return undefined
     if (!completion) return undefined
     try {
-      const claim = await open(`${task.statusFile}.notified`, "wx", 0o600)
+      const marker = "kind" in completion && completion.kind === "exit" ? `${task.statusFile}.runtime-notified` : `${task.statusFile}.notified`
+      const claim = await open(marker, "wx", 0o600)
       await claim.close()
       return completion
     } catch {

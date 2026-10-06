@@ -23,9 +23,9 @@ for (const maxDepth of [1, 3]) test(`background agents respect a configured maxi
   }
 
   try {
-    assert.deepEqual(await registeredAtDepth(String(maxDepth - 1)), ["background_agent_message", "background_agent"])
-    assert.deepEqual(await registeredAtDepth(String(maxDepth)), [])
-    assert.deepEqual(await registeredAtDepth(String(maxDepth + 1)), [])
+    assert.deepEqual(await registeredAtDepth(String(maxDepth - 1)), ["background_agent_report", "background_agent_message", "background_agent"])
+    assert.deepEqual(await registeredAtDepth(String(maxDepth)), ["background_agent_report"])
+    assert.deepEqual(await registeredAtDepth(String(maxDepth + 1)), ["background_agent_report"])
   } finally {
     if (previousAgentStatus === undefined) delete process.env.PI_BACKGROUND_AGENT_STATUS_FILE
     else process.env.PI_BACKGROUND_AGENT_STATUS_FILE = previousAgentStatus

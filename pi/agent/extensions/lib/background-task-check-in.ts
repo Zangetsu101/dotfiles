@@ -1,3 +1,4 @@
+import { readAgentProgress, describeAgentProgress } from "./background-progress.ts"
 import { backgroundAttachCommand } from "./background-attach.ts"
 import { existsSync } from "node:fs"
 import { open } from "node:fs/promises"
@@ -33,13 +34,15 @@ export async function notifyRunningTask(
   if (!active() || await tasks.completion(task)) return false
   const current = (await tasks.list({ subtreeRootId: task.parentId ?? task.id })).find((candidate) => candidate.id === task.id)
   if (!current || current.status !== "running") return false
-  const output = await readOutputTail(task.outputFile)
+  const progress = task.kind === "agent" ? await readAgentProgress(task.statusFile) : undefined
+  if (progress && ["completed", "failed"].includes(progress.latest.state)) return false
+  const output = progress ? "" : await readOutputTail(task.outputFile)
   const elapsed = task.startedAt === undefined ? "unknown" : `${Math.max(0, Math.floor((Date.now() - task.startedAt) / 60_000))} minutes`
   if (!active() || await tasks.completion(task) || existsSync(task.statusFile)) return false
   pi.sendMessage({
     customType: task.kind === "agent" ? "background-agent-check-in" : "background-monitor-check-in",
-    details: { label: task.label, status: "running", id: task.id, target: task.target, output: output.trim() || "(no output)", elapsed, attach: backgroundAttachCommand(task) },
-    content: `Background ${task.kind} ${task.id} (${task.label}) status: running; elapsed: ${elapsed}.\nRecent output:\n${output.trim() || "(no output)"}\nUse background_task to inspect it or schedule another check-in.`,
+    details: { label: task.label, status: "running", id: task.id, target: task.target, output: progress ? undefined : output.trim() || "(no output)", progress, elapsed, attach: backgroundAttachCommand(task) },
+    content: `Background ${task.kind} ${task.id} (${task.label}) status: running; elapsed: ${elapsed}.\n${progress ? `Reported progress: ${describeAgentProgress(progress)}` : `Recent output:\n${output.trim() || "(no output)"}`}\nUse background_task to inspect it or schedule another check-in.`,
     display: true,
   }, { deliverAs: "followUp", triggerTurn: true })
   return true
