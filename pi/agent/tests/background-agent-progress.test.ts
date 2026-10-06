@@ -6,7 +6,7 @@ import test, { beforeEach, afterEach } from "node:test"
 import backgroundAgent from "../extensions/background-agent.ts"
 import backgroundMonitor from "../extensions/background-monitor.ts"
 import { notifyRunningTask } from "../extensions/lib/background-task-check-in.ts"
-import { BackgroundTasks } from "../extensions/lib/background-task.ts"
+import { BackgroundTasks, writeTaskCompletion } from "../extensions/lib/background-task.ts"
 import { FakePiRuntime, FakeTmuxProcessAdapter } from "./support/background-task-runtime.ts"
 import { installBackgroundTaskEnvironmentHooks } from "./support/background-task-environment.ts"
 
@@ -56,6 +56,12 @@ test("reported activity and blockers remain inspectable without consuming histor
     await parent.emit("session_tree")
     await new Promise((resolve) => setTimeout(resolve, 150))
     assert.equal(parent.messages.length, 2, "attention must not be repeated on reload")
+    await writeTaskCompletion(spawned.details.statusFile, { kind: "settled", stopReason: "error", output: "Provider failed" })
+    const failed = await parent.execute("background_task", { action: "inspect", id: spawned.details.id })
+    assert.equal(failed.details.status, "failed", "inspection must agree with model-error notifications")
+    for (let attempt = 0; attempt < 50 && parent.messages.length < 3; attempt++) await new Promise((resolve) => setTimeout(resolve, 10))
+    assert.equal(parent.messages[2].details.status, "failed")
+    assert.equal(parent.messages[2].details.output, "Provider failed")
   } finally {
     await child.emit("session_shutdown")
     await parent.emit("session_shutdown", { reason: "reload" })

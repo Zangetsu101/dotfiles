@@ -18,6 +18,7 @@ import {
   BackgroundTasks,
   systemTmux,
   writeTaskCompletion,
+  taskCompletionStatus,
   type TaskStatus,
   type TmuxProcessAdapter,
 } from "./lib/background-task.ts"
@@ -198,14 +199,7 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
         const ack = join(mailbox, `${id}.ack`)
         try {
           const message = await readFile(request, "utf8")
-          if (reported) {
-            await withMailboxLock(statusFile, async () => {
-              await Promise.all([rm(statusFile, { force: true }), rm(`${statusFile}.notified`, { force: true }), rm(`${statusFile}.progress`, { force: true }), rm(`${statusFile}.check-in`, { force: true })])
-              reported = false
-              await tmux.run(["set-option", "-w", "@pi_task_status", "running"]).catch(() => undefined)
-              await tmux.run(["set-option", "-w", "@pi_agent_status", "running"]).catch(() => undefined)
-            })
-          }
+          if (reported) await resetAssignment()
           pi.sendUserMessage(message, processing ? { deliverAs: "steer" } : undefined)
           await writeFile(ack, "delivered", { flag: "wx", mode: 0o600 })
         } catch (error) {
@@ -227,6 +221,17 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
   pi.on("agent_end", () => { processing = false })
   const activeBackgroundActivities = new Set<string>()
   let reported = existsSync(statusFile)
+  const resetAssignment = () => withMailboxLock(statusFile, async () => {
+    await Promise.all([
+      rm(statusFile, { force: true }),
+      rm(`${statusFile}.notified`, { force: true }),
+      rm(`${statusFile}.progress`, { force: true }),
+      rm(`${statusFile}.check-in`, { force: true }),
+      tmux.run(["set-option", "-w", "@pi_agent_status", "running"]).catch(() => undefined),
+      tmux.run(["set-option", "-w", "@pi_task_status", "running"]).catch(() => undefined),
+    ])
+    reported = false
+  })
 
   pi.events.on(BACKGROUND_ACTIVITY_STARTED, (data) => {
     const activity = data as BackgroundActivity
@@ -239,16 +244,7 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
   })
 
   pi.on("agent_start", async () => {
-    if (!reported) return
-    reported = false
-    await Promise.all([
-      rm(statusFile, { force: true }),
-      rm(`${statusFile}.notified`, { force: true }),
-      rm(`${statusFile}.progress`, { force: true }),
-      rm(`${statusFile}.check-in`, { force: true }),
-      tmux.run(["set-option", "-w", "@pi_agent_status", "running"]).catch(() => undefined),
-      tmux.run(["set-option", "-w", "@pi_task_status", "running"]).catch(() => undefined),
-    ])
+    if (reported) await resetAssignment()
   })
 
   pi.on("agent_settled", async (_event, ctx) => {
@@ -263,6 +259,7 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
       const result = finalAssistantOutput(ctx)
       await writeTaskCompletion(statusFile, {
         kind: "settled",
+        assignment: (await readAgentProgress(statusFile))?.assignment ?? randomUUID(),
         output: result.output,
         stopReason: result.stopReason,
       })
@@ -334,6 +331,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     let checkingSettled = false
     let runtimeExit = false
     let watcher: FSWatcher
+    const reconcile = (operation: () => Promise<void>) => { void operation().catch((error) => console.error("background agent reconciliation:", error)) }
     const setPoll = (callback: () => void, interval: number) => {
       if (shuttingDown || watchers.get(agent.id) !== watcher) return
       const previous = reconciliationTimers.get(agent.id)
@@ -344,6 +342,10 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       if (!settled || shuttingDown || checkingSettled) return
       checkingSettled = true
       try {
+        if (await tasks.pendingAssignmentCompletionPath(agent)) {
+          await consume(true)
+          return
+        }
         let completion = await tasks.completion(agent)
         if (completion && "kind" in completion && completion.kind !== "exit" && !await tasks.isPresent(agent)) {
           completion = { kind: "exit", reason: "agent session disappeared after reporting assignment completion" }
@@ -364,18 +366,17 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         await tasks.setStatus(agent, "running")
         await checkIns.watch(agent.statusFile, () => notifyRunningTask(pi, tasks, agent, () => !settled && !shuttingDown))
         pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
-        setPoll(() => void consume(), pollMs)
-        void consume()
+        setPoll(() => reconcile(consume), pollMs)
+        reconcile(consume)
       } finally {
         checkingSettled = false
       }
     }
     void checkIns.watch(agent.statusFile, () => notifyRunningTask(pi, tasks, agent, () => !settled && !shuttingDown))
-    const consume = async () => {
-      if (settled) return void checkSettled()
-      if (consuming || shuttingDown) return
-      consuming = true
-      const progress = await readAgentProgress(agent.statusFile)
+    const consumeCompletion = async () => {
+      const completion = await tasks.claimCompletionOrReconcile(agent)
+      if (watchers.get(agent.id) !== watcher) return
+      const progress = completion ? undefined : await readAgentProgress(agent.statusFile).catch((error) => { console.error("background agent progress:", error); return undefined })
       if (progress?.latest.state === "blocked" && progress.latest.attention && !await tasks.completion(agent)) {
         await withMailboxLock(agent.statusFile, async () => {
           const marker = `${agent.statusFile}.attention`
@@ -391,40 +392,40 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         })
       }
 
-      const completion = await tasks.claimCompletionOrReconcile(agent)
-      if (watchers.get(agent.id) !== watcher) { consuming = false; return }
-      if (!completion) {
-        consuming = false
-        return
-      }
+      if (!completion) return
 
-      settled = true
-      runtimeExit = "kind" in completion && completion.kind === "exit"
-      checkIns.stop(agent.statusFile)
-      pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
       const agentCompletion = "kind" in completion
-      const failed = agentCompletion ? completion.kind === "exit" || completion.stopReason === "error" || completion.outcome === "failed" : completion.status === "failed"
-      const terminated = !agentCompletion && completion.status === "cancelled"
+      const currentCompletion = await tasks.completion(agent)
+      settled = !agentCompletion || !completion.assignment || Boolean(currentCompletion && "kind" in currentCompletion && currentCompletion.assignment === completion.assignment)
+      runtimeExit = agentCompletion && completion.kind === "exit"
+      if (settled) {
+        checkIns.stop(agent.statusFile)
+        pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
+      }
+      const taskStatus = taskCompletionStatus(completion)
+      const failed = taskStatus === "failed"
+      const terminated = taskStatus === "terminated"
       let status = "finished its initial task"
       if (terminated) status = `was terminated${completion.reason ? `: ${completion.reason}` : ""}`
       else if (agentCompletion && completion.kind === "reported") status = failed ? "reported it could not finish its assignment" : "reported its assignment completed"
       else if (failed) status = agentCompletion && completion.kind !== "exit" ? "failed with a model error" : agentCompletion && completion.reason ? `runtime failed: ${completion.reason}` : `failed with exit code ${completion.exitCode ?? "unknown"}`
-      const taskStatus: TaskStatus = terminated ? "terminated" : failed ? "failed" : "succeeded"
-      await Promise.all([
+      if (settled) await Promise.all([
         tmux.run(["set-option", "-w", "-t", agent.target, "@pi_agent_status", terminated ? "terminated" : failed ? "failed" : "settled"]),
         tmux.run(["set-option", "-w", "-t", agent.target, "@pi_task_status", taskStatus]),
       ]).catch(() => undefined)
 
-      if (watchers.get(agent.id) !== watcher) { consuming = false; return }
+      if (watchers.get(agent.id) !== watcher) return
       const summary = `Background agent ${agent.id} (${agent.label}) ${status}.`
-      agent.status = taskStatus
-      const cached = agentsCache.find((item) => item.id === agent.id)
-      if (cached) cached.status = taskStatus
-      pi.events.emit(BACKGROUND_TASK_STATUS_CHANGED, agent)
+      if (settled) {
+        agent.status = taskStatus
+        const cached = agentsCache.find((item) => item.id === agent.id)
+        if (cached) cached.status = taskStatus
+        pi.events.emit(BACKGROUND_TASK_STATUS_CHANGED, agent)
+      }
       const attach = backgroundAttachCommand(agent)
       const output = "output" in completion ? completion.output?.trim() || "(no final output)" : "(no final output)"
 
-      if (watchers.get(agent.id) !== watcher) { consuming = false; return }
+      if (watchers.get(agent.id) !== watcher) return
       pi.sendMessage(
         {
           customType: "background-agent",
@@ -434,26 +435,22 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         },
         { deliverAs: "followUp", triggerTurn: true },
       )
-      setPoll(() => void checkSettled(), settledPollMs)
-      consuming = false
+      setPoll(() => reconcile(consume), settled ? settledPollMs : pollMs)
+    }
+    const consume = async (includeSettled = false) => {
+      if (settled && !includeSettled) return checkSettled()
+      if (consuming || shuttingDown) return
+      consuming = true
+      try { await consumeCompletion() } finally { consuming = false }
     }
 
     watcher = watch(dirname(agent.statusFile), (_event, filename) => {
-      if (!filename) {
-        if (settled) void checkSettled()
-        else void consume()
-        return
-      }
-      const changed = filename.toString()
-      if (changed === basename(agent.statusFile) || changed === `${basename(agent.statusFile)}.progress`) {
-        if (settled) void checkSettled()
-        else void consume()
-      }
+      const changed = filename?.toString()
+      if (!changed || changed === basename(agent.statusFile) || changed === `${basename(agent.statusFile)}.progress`) reconcile(consume)
     })
     watchers.set(agent.id, watcher)
-    setPoll(() => settled ? void checkSettled() : void consume(), settled ? settledPollMs : pollMs)
-    if (settled) void checkSettled()
-    else void consume()
+    setPoll(() => reconcile(consume), settled ? settledPollMs : pollMs)
+    reconcile(consume)
   }
 
   pi.on("session_start", async (event, ctx) => {
@@ -482,7 +479,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         const completion = await tasks.completion(agent)
         return completion && "kind" in completion && completion.kind !== "exit"
           ? await tasks.isPresent(agent)
-          : !completion && (await listAgents(tasks, tmux, family!.nodeId)).find((item) => item.id === agent.id)?.status === "running"
+          : !completion && agent.status !== "terminated" && agent.status !== "interrupted" && await tasks.isPresent(agent)
       }
       if (!await canReceive()) return { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { ...metadata, status: "not_running" } }
       const mailbox = `${agent.statusFile}.messages`

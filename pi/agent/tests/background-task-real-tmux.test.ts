@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import test from "node:test"
 import { promisify } from "node:util"
-import { BackgroundTasks, type TmuxProcessAdapter } from "../extensions/lib/background-task.ts"
+import { BackgroundTasks, writeTaskCompletion, type TmuxProcessAdapter } from "../extensions/lib/background-task.ts"
 
 const execFileAsync = promisify(execFile)
 const tmux = async (socket: string, args: string[]): Promise<string> =>
@@ -20,6 +20,19 @@ async function waitFor<T>(read: () => Promise<T>, accept: (value: T) => boolean)
   }
   throw new Error("condition was not reached")
 }
+
+test("intentional cancellation survives the agent process exiting without a second failure notice", async (t) => {
+  if (!(await tmuxAvailable())) return t.skip("tmux is not installed")
+  const socket = `pi-cancel-test-${process.pid}-${Date.now()}`
+  const tasks = new BackgroundTasks({ run: (args) => tmux(socket, args) })
+  t.after(() => tmux(socket, ["kill-server"]).catch(() => undefined))
+  const agent = await tasks.create({ familyId: "cancel-family", rootId: "cancel-root", parentId: "cancel-root", kind: "agent", label: "cancel", cwd: process.cwd(), command: "/bin/sh", args: ["-c", "sleep 0.3; exit 1"], remainOnExit: true })
+  await writeTaskCompletion(agent.statusFile, { status: "cancelled", reason: "Stopped by parent" })
+  assert.equal((await tasks.claimCompletionRecord(agent) as { status: string }).status, "cancelled")
+  await waitFor(() => tmux(socket, ["display-message", "-p", "-t", agent.target, "#{pane_dead}"]), (value) => value === "1")
+  assert.equal((await tasks.completion(agent) as { status: string }).status, "cancelled")
+  assert.equal(await tasks.claimCompletionRecord(agent), undefined)
+})
 
 test("real tmux gives a task family agent windows and pooled monitor panes with stable targets", async (t) => {
   if (!(await tmuxAvailable())) return t.skip("tmux is not installed")

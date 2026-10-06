@@ -2,7 +2,7 @@ import { readAgentProgress, describeAgentProgress } from "./lib/background-progr
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 import { BACKGROUND_ACTIVITY_FINISHED, BACKGROUND_ACTIVITY_STARTED, type BackgroundActivity } from "./lib/background-activity.ts"
-import { BACKGROUND_TASK_CREATED, BACKGROUND_TASK_REMOVED, BACKGROUND_TASK_STATUS_CHANGED, BackgroundTasks, safeTaskLabel, type BackgroundTask } from "./lib/background-task.ts"
+import { BACKGROUND_TASK_CREATED, BACKGROUND_TASK_REMOVED, BACKGROUND_TASK_STATUS_CHANGED, BackgroundTasks, taskCompletionStatus, safeTaskLabel, type BackgroundTask } from "./lib/background-task.ts"
 import { FAMILY_ENTRY, familyForContext, familyTaskParent, type TaskFamily } from "./lib/background-family.ts"
 import { taskCheckIns } from "./lib/task-check-in.ts"
 import { notifyRunningTask, readOutputTail } from "./lib/background-task-check-in.ts"
@@ -293,7 +293,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
         const output = settledAgent
           ? completion.output?.trim() || "(no final output)"
           : (await readOutputTail(task.outputFile)).trim() || "(no output)"
-        const status = completion ? "status" in completion ? completion.status : completion.kind === "exit" || completion.outcome === "failed" ? "failed" : "succeeded" : task.status
+        const status = completion ? "status" in completion ? completion.status : taskCompletionStatus(completion) : task.status
         const attach = backgroundAttachCommand(task)
         const heading = settledAgent ? "Final output" : "Recent output"
         return { content: [{ type: "text" as const, text: `${task.kind} ${task.id} (${task.label}): ${status}\n${progress ? `Reported progress: ${describeAgentProgress(progress)}\nRecent history:\n${progress.history.map((report) => `${new Date(report.at).toISOString()} ${report.state}: ${report.activity}${report.help ? `; help: ${report.help}` : ""}`).join("\n")}\n` : ""}${heading}:\n${output}` }], details: { status, id: task.id, label: task.label, target: task.target, attach, output, progress } }

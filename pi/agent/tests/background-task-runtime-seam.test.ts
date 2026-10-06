@@ -263,6 +263,7 @@ test("a suppressed running check-in reaches the parent after reload", async () =
   }
   await clock.ready()
   await clock.advance(1_200)
+  await waitFor(() => !suppressOnce)
   assert.equal(first.messages.length, 0)
   assert.equal(suppressOnce, false)
   const persisted = [...first.entries]

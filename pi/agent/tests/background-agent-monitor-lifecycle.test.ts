@@ -33,6 +33,7 @@ for (const outcome of ["settled", "exit"] as const) test(outcome === "settled"
     completion: async () => completed ? completion : undefined,
     setStatus: async () => {},
     isPresent: async () => true,
+    pendingAssignmentCompletionPath: async () => undefined,
   }
   const handlers = new Map<string, Array<(event: any, ctx: any) => Promise<void> | void>>()
   const messages: unknown[] = []
