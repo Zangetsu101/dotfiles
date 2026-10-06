@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events"
 import { writeFile } from "node:fs/promises"
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import type { TmuxProcessAdapter } from "../../extensions/lib/background-task.ts"
 
 type Pane = { id: string; windowId: string; metadata: Map<string, string>; command: string[]; dead: boolean; retained: boolean }
@@ -104,13 +105,13 @@ export class FakeTmuxProcessAdapter implements TmuxProcessAdapter {
 }
 
 export class FakePiRuntime {
-  readonly events = new EventEmitter(); readonly tools = new Map<string, any>(); readonly commands = new Map<string, any>(); readonly handlers = new Map<string, Array<(event: any, ctx: any) => any>>(); readonly messages: any[] = []; readonly userMessages: any[] = []; readonly notifications: string[] = []; readonly entries: any[] = []
+  readonly events = new EventEmitter(); readonly tools = new Map<string, any>(); readonly commands = new Map<string, any>(); readonly handlers = new Map<string, Array<(event: any, ctx: any) => any>>(); readonly messages: any[] = []; readonly messageOptions: Parameters<ExtensionAPI["sendMessage"]>[1][] = []; readonly userMessages: any[] = []; readonly notifications: string[] = []; readonly entries: any[] = []
   readonly context: any
   readonly pi: any
   constructor(options: { sessionId?: string; sessionName?: string; entries?: any[] } = {}) {
     this.entries.push(...(options.entries ?? []))
     this.context = { cwd: "/repo", hasUI: true, model: undefined, ui: { notify: (message: string) => this.notifications.push(message), confirm: async () => true }, sessionManager: { getSessionId: () => options.sessionId ?? "conversation", getSessionName: () => options.sessionName ?? "dotfiles", getBranch: () => this.entries } }
-    this.pi = { events: this.events, on: (name: string, handler: (event: any, ctx: any) => any) => this.handlers.set(name, [...(this.handlers.get(name) ?? []), handler]), registerMessageRenderer() {}, registerTool: (tool: any) => this.tools.set(tool.name, tool), registerCommand: (name: string, command: any) => this.commands.set(name, command), sendMessage: (message: any) => this.messages.push(message), sendUserMessage: (text: string, options?: any) => this.userMessages.push({ text, options }), appendEntry: (customType: string, data: unknown) => this.entries.push({ type: "custom", customType, data }), getSessionName: () => options.sessionName ?? "dotfiles", getThinkingLevel: () => "medium" }
+    this.pi = { events: this.events, on: (name: string, handler: (event: any, ctx: any) => any) => this.handlers.set(name, [...(this.handlers.get(name) ?? []), handler]), registerMessageRenderer() {}, registerTool: (tool: any) => this.tools.set(tool.name, tool), registerCommand: (name: string, command: any) => this.commands.set(name, command), sendMessage: (message: any, options?: Parameters<ExtensionAPI["sendMessage"]>[1]) => { this.messages.push(message); this.messageOptions.push(options) }, sendUserMessage: (text: string, options?: any) => this.userMessages.push({ text, options }), appendEntry: (customType: string, data: unknown) => this.entries.push({ type: "custom", customType, data }), getSessionName: () => options.sessionName ?? "dotfiles", getThinkingLevel: () => "medium" }
   }
   async execute(name: string, params: any) { return this.tools.get(name).execute("call", params, undefined, undefined, this.context) }
   async emit(name: string, event: any = {}) { for (const handler of this.handlers.get(name) ?? []) await handler(event, this.context) }

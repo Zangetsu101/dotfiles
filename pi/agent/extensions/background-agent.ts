@@ -388,7 +388,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
             details: { id: agent.id, label: agent.label, target: agent.target, status: "blocked", progress, summary: describeAgentProgress(progress), attach: backgroundAttachCommand(agent) },
             content: `Background agent ${agent.id} (${agent.label}) requests attention.\nReported progress: ${describeAgentProgress(progress)}\nUse background_task to inspect it or background_agent_message to help.`,
             display: true,
-          }, { deliverAs: "followUp", triggerTurn: true })
+          }, { deliverAs: "steer", triggerTurn: true })
         })
       }
 
@@ -433,7 +433,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
           content: `${summary}\nAttach with: ${attach}\n\nFinal output:\n${output}\n\nReview the result and report it to the user.`,
           display: true,
         },
-        { deliverAs: "followUp", triggerTurn: true },
+        { deliverAs: "steer", triggerTurn: true },
       )
       setPoll(() => reconcile(consume), settled ? settledPollMs : pollMs)
     }

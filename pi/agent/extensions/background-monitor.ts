@@ -183,7 +183,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       const attach = backgroundAttachCommand(task)
       if (!active()) return
       if (ctx.hasUI) ctx.ui.notify(summary, failed ? "error" : "info")
-      pi.sendMessage({ customType: "background-monitor", details: { summary, label: task.label, status: completion.status === "cancelled" ? "terminated" : completion.status, id: task.id, target: task.target, output: output.trim() || "(no output)", attach, exitCode: completion.exitCode }, content: `${summary}\nAttach with: ${attach}\n\nOutput:\n${output.trim() || "(no output)"}\n\nReview the result. When all background work has returned, provide the complete standalone result in your final turn, including any conclusions that remain unchanged.`, display: true }, { deliverAs: "followUp", triggerTurn: true })
+      pi.sendMessage({ customType: "background-monitor", details: { summary, label: task.label, status: completion.status === "cancelled" ? "terminated" : completion.status, id: task.id, target: task.target, output: output.trim() || "(no output)", attach, exitCode: completion.exitCode }, content: `${summary}\nAttach with: ${attach}\n\nOutput:\n${output.trim() || "(no output)"}\n\nReview the result. When all background work has returned, provide the complete standalone result in your final turn, including any conclusions that remain unchanged.`, display: true }, { deliverAs: "steer", triggerTurn: true })
     }
     const launchConsume = () => {
       const pending = consume()
