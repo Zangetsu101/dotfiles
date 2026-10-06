@@ -1,34 +1,32 @@
 ---
 name: code-review
 source: https://github.com/mattpocock/skills/tree/main/skills/engineering/code-review
-description: "Review changes since a commit, branch, tag, or merge-base on two independent axes: repository standards and the originating spec. Use for branch, PR, work-in-progress, or review-since requests."
+description: "Review committed ranges or staged changes against repository standards and the originating spec."
 ---
 
-Review the diff between `HEAD` and a user-supplied fixed point on two independent axes:
+Review a committed range or the index against `HEAD` on two independent axes:
 
 - **Standards**: conformity with documented repository standards and the review baseline.
 - **Spec**: fidelity to the originating issue or spec.
 
-The issue tracker should have been provided to you. If `docs/agents/issue-tracker.md` is missing, tell the user to run `/setup-matt-pocock-skills`.
-
 ## Process
 
-### 1. Pin the fixed point
+### 1. Pin the review scope
 
-Use the fixed point the user supplied: a commit SHA, branch, tag, `main`, `HEAD~5`, or equivalent. Ask for it if absent.
+If the user requests staged changes or the index against `HEAD`, use staged mode. Otherwise, use the supplied fixed point for a committed review: a commit SHA, branch, tag, `main`, `HEAD~5`, or equivalent. Ask for the scope if absent or ambiguous.
 
-Resolve it with `git rev-parse <fixed-point>`. Record these commands for both reviewers:
+Record the mode and commands for both reviewers:
 
-- Diff: `git diff <fixed-point>...HEAD`
-- Commits: `git log <fixed-point>..HEAD --oneline`
+- **Committed**: resolve the fixed point with `git rev-parse <fixed-point>`. Diff: `git diff <fixed-point>...HEAD`. Commits: `git log <fixed-point>..HEAD --oneline`.
+- **Staged**: diff: `git diff --cached HEAD`. Commit list: `none; uncommitted changes`. Only staged changes are in scope, including staged additions and deletions. Read index contents with `git show :<path>` when inspecting the reviewed version of a file; working-tree contents may include unstaged changes.
 
-Confirm the diff is non-empty. Stop on a bad ref or empty diff.
+Confirm the selected diff is non-empty. Stop on a bad ref or empty diff.
 
 ### 2. Identify the spec source
 
 Look in this order:
 
-1. Issue references in commit messages, fetched through `docs/agents/issue-tracker.md`.
+1. For committed mode, issue references in the selected commit messages. Resolve them using `docs/agents/issue-tracker.md` if available; otherwise, continue to another spec source.
 2. A path supplied by the user.
 3. A file under `docs/`, `specs/`, or `.scratch/` matching the branch or feature.
 4. Ask the user where the spec is.
@@ -43,19 +41,19 @@ Find repository documents that govern the changed code, such as `CODING_STANDARD
 
 Record each source's absolute path and scope for the Standards reviewer.
 
-### 4. Dispatch both reviewers in parallel
+### 4. Dispatch the applicable reviewers
 
 Resolve `standards-review.md` and `spec-review.md` relative to this skill's directory and pass their absolute paths in the prompts.
 
 Standards reviewer prompt:
 
-> You are the Standards reviewer. Carry out this review directly. Read `<absolute-standards-review-path>` and follow it. Use diff command `<diff-command>` and commit-list command `<commit-command>`. The standards sources and their scopes are: `<absolute paths and scopes, or "none found">`.
+> You are the Standards reviewer. Carry out this review directly. Read `<absolute-standards-review-path>` and follow it. Review mode: `<mode>`. File-version instructions: `<instructions from step 1>`. Diff command: `<diff-command>`. Commit list: `<commit-command or "none; uncommitted changes">`. The standards sources and their scopes are: `<absolute paths and scopes, or "none found">`.
 
 Spec reviewer prompt:
 
-> You are the Spec reviewer. Carry out this review directly. Read `<absolute-spec-review-path>` and follow it. Use diff command `<diff-command>` and commit-list command `<commit-command>`. The originating spec is at `<path>` / has these fetched contents: `<contents>`.
+> You are the Spec reviewer. Carry out this review directly. Read `<absolute-spec-review-path>` and follow it. Review mode: `<mode>`. File-version instructions: `<instructions from step 1>`. Diff command: `<diff-command>`. Commit list: `<commit-command or "none; uncommitted changes">`. The originating spec is at `<path>` / has these fetched contents: `<contents>`.
 
-Dispatch both at once so their contexts remain independent.
+Always dispatch the Standards reviewer. Dispatch the Spec reviewer only when a spec is available. When both apply, dispatch them in parallel with independent contexts.
 
 ### 5. Aggregate
 
