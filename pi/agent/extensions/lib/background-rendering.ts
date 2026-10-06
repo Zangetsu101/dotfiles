@@ -49,7 +49,9 @@ export function backgroundToolRenderers(name: string): ToolRenderers {
       const target = string(details.target)
       const attach = string(details.attach) || textContent(result.content).match(/^Attach with: (.+)$/m)?.[1] || (target ? `tmux attach -t ${target}` : "")
       const extra = [id && `Task: ${id}`, target && `Tmux target: ${target}`, attach && `Attach: ${attach}`].filter(Boolean).join("\n")
-      const output = typeof details.output === "string" ? details.output : textContent(result.content)
+      const content = textContent(result.content)
+      const acknowledgement = name === "background_agent_message" && !context.isError && !options.isPartial && status === "delivered" && content === "delivered"
+      const output = typeof details.output === "string" ? details.output : acknowledgement ? "" : content
       const body = options.expanded ? [output, extra].filter(Boolean).join("\n\n") : ""
       return themedText(() => theme.fg(context.isError || status === "error" ? "error" : options.isPartial ? "warning" : "muted", heading) + theme.fg("muted", expandHint(options.expanded)) + (body ? `\n${theme.fg("toolOutput", body)}` : ""))
     },
