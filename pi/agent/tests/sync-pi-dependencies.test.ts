@@ -9,8 +9,10 @@ test("sync and check cover every Pi dependency", () => {
   const root = mkdtempSync(join(tmpdir(), "sync-pi-"))
   try {
     const agent = join(root, "agent")
-    const globalModules = join(root, "global")
-    const globalPi = join(globalModules, "@earendil-works/pi-coding-agent")
+    const installRoot = join(root, "install")
+    const managedModules = join(installRoot, "releases", "1.0.3", "node_modules")
+    mkdirSync(installRoot, { recursive: true })
+    writeFileSync(join(installRoot, "current-version"), "1.0.3\n")
     const versions: Record<string, string> = {
       "@earendil-works/pi-coding-agent": "1.0.3",
       "@earendil-works/pi-ai": "1.0.4",
@@ -25,16 +27,16 @@ test("sync and check cover every Pi dependency", () => {
     copyFileSync(new URL("../scripts/sync-pi-dependencies.mjs", import.meta.url), join(agent, "scripts/sync.mjs"))
     packageAt(join(agent, "package.json"), { dependencies: versions })
     for (const [name, version] of Object.entries(versions)) {
-      packageAt(join(name === "@earendil-works/pi-coding-agent" ? globalPi : join(globalPi, "node_modules", name), "package.json"), { version })
+      packageAt(join(managedModules, name, "package.json"), { version })
       packageAt(join(agent, "node_modules", name, "package.json"), { version })
     }
     const bin = join(root, "bin")
     mkdirSync(bin)
     const argsFile = join(root, "args")
-    writeFileSync(join(bin, "npm"), `#!/bin/sh\nif [ "$1" = root ]; then printf '%s\\n' '${globalModules}'; else printf '%s\\n' "$@" > '${argsFile}'; fi\n`)
+    writeFileSync(join(bin, "npm"), `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsFile}'\n`)
     chmodSync(join(bin, "npm"), 0o755)
     const run = (...args: string[]) => spawnSync(process.execPath, [join(agent, "scripts/sync.mjs"), ...args], {
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, encoding: "utf8",
+      env: { ...process.env, PI_MANAGED_INSTALL_ROOT: installRoot, PATH: `${bin}:${process.env.PATH}` }, encoding: "utf8",
     })
     assert.equal(run().status, 0)
     const installArgs = readFileSync(argsFile, "utf8").trim().split("\n")

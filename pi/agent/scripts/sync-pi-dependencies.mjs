@@ -1,37 +1,35 @@
-import { execFileSync, spawnSync } from "node:child_process"
-import { readFileSync } from "node:fs"
+import { spawnSync } from "node:child_process"
+import { existsSync, readFileSync } from "node:fs"
+import { createRequire } from "node:module"
+import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const PI_PACKAGE = "@earendil-works/pi-coding-agent"
 const agentDir = dirname(dirname(fileURLToPath(import.meta.url)))
 
-// npm lifecycle scripts set these to the local project, which makes a nested
-// `npm root --global` incorrectly resolve to <project>/lib/node_modules.
-const globalNpmEnv = { ...process.env }
-for (const name of [
-  "npm_config_prefix",
-  "npm_config_global_prefix",
-  "npm_config_globalconfig",
-  "npm_config_local_prefix",
-]) {
-  delete globalNpmEnv[name]
+const installRoot = process.env.PI_MANAGED_INSTALL_ROOT || join(homedir(), ".pi", "agent", "install")
+const currentVersion = readFileSync(join(installRoot, "current-version"), "utf8").trim()
+if (!/^[A-Za-z0-9._+-]+$/.test(currentVersion) || [".", ".."].includes(currentVersion)) {
+  throw new Error(`Invalid managed Pi version in ${join(installRoot, "current-version")}`)
 }
-const globalModulesDir = execFileSync("npm", ["root", "--global"], {
-  encoding: "utf8",
-  env: globalNpmEnv,
-}).trim()
+const managedModulesDir = join(installRoot, "releases", currentVersion, "node_modules")
 
 function readPackage(path) {
   return JSON.parse(readFileSync(path, "utf8"))
 }
 
 const localPackage = readPackage(join(agentDir, "package.json"))
-const globalPiDir = join(globalModulesDir, PI_PACKAGE)
-const globalPi = readPackage(join(globalPiDir, "package.json"))
-const expected = { [PI_PACKAGE]: globalPi.version }
+const managedPiDir = join(managedModulesDir, PI_PACKAGE)
+const managedPi = readPackage(join(managedPiDir, "package.json"))
+const managedRequire = createRequire(join(managedPiDir, "package.json"))
+const expected = { [PI_PACKAGE]: managedPi.version }
 for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-tui", "typebox"]) {
-  expected[name] = readPackage(join(globalPiDir, "node_modules", name, "package.json")).version
+  const packagePath = managedRequire.resolve.paths(name)
+    .map((path) => join(path, name, "package.json"))
+    .find((path) => existsSync(path))
+  if (!packagePath) throw new Error(`Could not find ${name} installed for ${managedPiDir}`)
+  expected[name] = readPackage(packagePath).version
 }
 
 if (process.argv.includes("--check")) {
@@ -49,7 +47,7 @@ if (process.argv.includes("--check")) {
   if (mismatches.length > 0) {
     for (const [name, version] of mismatches) {
       console.error(
-        `${name}: declared ${localPackage.dependencies?.[name] ?? "missing"}, installed ${installed[name]}, global ${version}`,
+        `${name}: declared ${localPackage.dependencies?.[name] ?? "missing"}, installed ${installed[name]}, managed ${version}`,
       )
     }
     console.error("Run npm run sync:pi")
