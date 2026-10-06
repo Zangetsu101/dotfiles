@@ -3,7 +3,7 @@ import { access, open, readFile, rename, rm, writeFile } from "node:fs/promises"
 
 export function createTaskCheckInScheduler(options: {
   now?: () => number
-  setTimer?: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>
+  setTimer?: (callback: () => Promise<void>, delay: number) => ReturnType<typeof setTimeout>
   clearTimer?: (timer: ReturnType<typeof setTimeout>) => void
 } = {}) {
   const now = options.now ?? Date.now
@@ -43,7 +43,7 @@ export function createTaskCheckInScheduler(options: {
   function arm(statusFile: string, state: State) {
     const previous = timers.get(statusFile)
     if (previous !== undefined) clearTimer(previous)
-    const timer = setTimer(() => { void fire(statusFile, state.id).catch((error) => console.error("background task check-in failed:", error)) }, Math.min(0x7fffffff, Math.max(0, state.deadline - now())))
+    const timer = setTimer(() => fire(statusFile, state.id).catch((error) => console.error("background task check-in failed:", error)), Math.min(0x7fffffff, Math.max(0, state.deadline - now())))
     timer.unref?.()
     timers.set(statusFile, timer)
   }

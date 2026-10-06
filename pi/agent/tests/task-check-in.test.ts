@@ -12,11 +12,11 @@ async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), "task-check-in-"))
   const statusFile = join(directory, "status")
   let now = 100
-  const pending = new Map<number, { due: number; callback: () => void }>()
+  const pending = new Map<number, { due: number; callback: () => void | Promise<void> }>()
   let next = 0
   const options = {
     now: () => now,
-    setTimer: (callback: () => void, delay: number) => {
+    setTimer: (callback: () => void | Promise<void>, delay: number) => {
       const id = ++next
       pending.set(id, { due: now + delay, callback })
       return id as unknown as ReturnType<typeof setTimeout>
@@ -25,12 +25,13 @@ async function fixture() {
   }
   const tick = async (time: number) => {
     now = time
+    const firing: Array<void | Promise<void>> = []
     for (const [id, timer] of [...pending]) {
       if (timer.due > time) continue
       pending.delete(id)
-      timer.callback()
+      firing.push(timer.callback())
     }
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await Promise.all(firing)
   }
   return { statusFile, options, tick }
 }
@@ -122,9 +123,10 @@ test("a suppressed check-in can be delivered after its parent resumes", async ()
   resumed.stop(statusFile)
 })
 
-test("check-in reports task start time and running status", async () => {
+test("check-in reports task start time and running status", async (context) => {
+  context.mock.method(Date, "now", () => 1_000_000)
   const { statusFile } = await fixture()
-  const task: BackgroundTask = { id: "child", kind: "monitor", label: "work", status: "running", statusFile, startedAt: Date.now() - 150_000, parentId: "root", parent: "root", target: "%child", cwd: "/tmp" }
+  const task: BackgroundTask = { id: "child", kind: "monitor", label: "work", status: "running", statusFile, startedAt: 850_000, parentId: "root", parent: "root", target: "%child", cwd: "/tmp" }
   const tasks: Pick<BackgroundTasks, "completion" | "list"> = {
     async completion() { return undefined },
     async list() { return [task] },

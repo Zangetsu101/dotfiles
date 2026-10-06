@@ -166,7 +166,7 @@ test("inspect keeps terminal tails for running agents, exited agents, and comple
 
 function controlledCheckIns() {
   let time = 1_000
-  const timers = new Map<object, { deadline: number; callback: () => void }>()
+  const timers = new Map<object, { deadline: number; callback: () => Promise<void> }>()
   const now = () => time
   const checkIns = createTaskCheckInScheduler({
     now,
@@ -183,10 +183,11 @@ function controlledCheckIns() {
     async advance(to: number) {
       assert.ok(to >= time)
       time = to
+      const firing: Promise<void>[] = []
       for (const [token, timer] of [...timers]) {
-        if (timer.deadline <= time) { timers.delete(token); timer.callback() }
+        if (timer.deadline <= time) { timers.delete(token); firing.push(timer.callback()) }
       }
-      await new Promise((resolve) => setTimeout(resolve, 5))
+      await Promise.all(firing)
     },
   }
 }
