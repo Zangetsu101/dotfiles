@@ -5,6 +5,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import backgroundAgentExtension from "../extensions/background-agent.ts"
+import { installBackgroundTaskEnvironmentHooks } from "./support/background-task-environment.ts"
+
+installBackgroundTaskEnvironmentHooks()
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const waitFor = async (condition: () => boolean) => {

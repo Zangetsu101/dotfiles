@@ -8,6 +8,7 @@ const root = {
   sessionId: "conversation-one",
   sessionName: undefined,
   entries: [] as any[],
+  environment: {},
 }
 
 test("a Root Pi restores its persisted task family on resume", () => {

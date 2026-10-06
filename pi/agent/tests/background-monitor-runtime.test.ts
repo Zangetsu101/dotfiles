@@ -4,6 +4,9 @@ import test from "node:test"
 import backgroundMonitorExtension, { formatTaskTree, taskArgumentCompletions } from "../extensions/background-monitor.ts"
 import { BACKGROUND_ACTIVITY_FINISHED, BACKGROUND_ACTIVITY_STARTED } from "../extensions/lib/background-activity.ts"
 import type { BackgroundTask, TaskCompletion } from "../extensions/lib/background-task.ts"
+import { installBackgroundTaskEnvironmentHooks } from "./support/background-task-environment.ts"
+
+installBackgroundTaskEnvironmentHooks()
 
 type Handler = (event: any, ctx: any) => any
 
