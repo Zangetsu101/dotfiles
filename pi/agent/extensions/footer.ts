@@ -102,10 +102,14 @@ export default function (pi: ExtensionAPI) {
 					truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "...")),
 					theme.fg("dim", left) + theme.fg("dim", padding + shownRight),
 				];
-				const statuses = [...footerData.getExtensionStatuses().entries()]
+				const extensionStatuses = footerData.getExtensionStatuses();
+				const statuses = [...extensionStatuses.entries()]
+					.filter(([key]) => key !== "codex-usage")
 					.sort(([a], [b]) => a.localeCompare(b))
 					.map(([, text]) => sanitizeStatus(text));
 				if (statuses.length) lines.push(truncateToWidth(statuses.join(" "), width, theme.fg("dim", "...")));
+				const codexUsage = extensionStatuses.get("codex-usage");
+				if (codexUsage) lines.push(truncateToWidth(sanitizeStatus(codexUsage), width, theme.fg("dim", "...")));
 				return lines;
 			},
 		}));

@@ -138,7 +138,7 @@ function renderStatus(ctx: ExtensionContext, snapshot: RateLimitSnapshot): strin
 
 function setUsageLine(ctx: ExtensionContext, text: string | undefined): void {
 	if (!ctx.hasUI) return;
-	ctx.ui.setWidget(STATUS_ID, text === undefined ? undefined : [text], { placement: "belowEditor" });
+	ctx.ui.setStatus(STATUS_ID, text);
 }
 
 function isCodexSubscriptionSession(ctx: ExtensionContext): boolean {
@@ -198,7 +198,7 @@ export default function codexUsageExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("codex-usage", {
-		description: "Refresh Codex 5h/7d used percentage below the editor",
+		description: "Refresh Codex 5h/7d used percentage at the bottom of the footer",
 		handler: async (_args, ctx) => {
 			await refresh(ctx);
 		},
