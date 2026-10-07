@@ -72,12 +72,15 @@ test("pending status subscriptions cannot update UI or survive shutdown or a new
   }
 })
 
-test("status line shows activity age and separates blocked and completed assignments", () => {
+test("status line shows running activity age and clears finished assignments", () => {
   const working = { ...task("agent", "running"), label: "tests", progress: { assignment: "one", latest: { id: "report", state: "blocked" as const, activity: "Waiting for token", at: 1000 }, history: [] } }
   assert.match(formatRunningTasks([working], undefined, 6000)!, /tests: blocked: Waiting for token \(5s ago\)/)
   assert.match(formatRunningTasks([working], undefined, 61000)!, /60s ago/)
   const completed = { ...working, status: "succeeded" as const, progress: { ...working.progress, latest: { ...working.progress.latest, state: "completed" as const, activity: "Tests pass" } } }
-  assert.match(formatRunningTasks([completed], undefined, 6000)!, /completed: Tests pass/)
+  for (const status of ["succeeded", "failed", "terminated", "interrupted", "completed"] as const) {
+    assert.equal(formatRunningTasks([{ ...completed, status }], undefined, 6000), undefined)
+    assert.equal(formatRunningTasks([working, { ...completed, status }], undefined, 6000), formatRunningTasks([working], undefined, 6000))
+  }
 })
 
 test("a spawned agent does not count itself, but counts its descendants", () => {

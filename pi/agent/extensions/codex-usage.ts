@@ -136,6 +136,11 @@ function renderStatus(ctx: ExtensionContext, snapshot: RateLimitSnapshot): strin
 	return ctx.ui.theme.fg(color, text);
 }
 
+function setUsageLine(ctx: ExtensionContext, text: string | undefined): void {
+	if (!ctx.hasUI) return;
+	ctx.ui.setWidget(STATUS_ID, text === undefined ? undefined : [text], { placement: "belowEditor" });
+}
+
 function isCodexSubscriptionSession(ctx: ExtensionContext): boolean {
 	const model = ctx.model;
 	return Boolean(model && model.provider === "openai-codex" && ctx.modelRegistry.isUsingOAuth(model));
@@ -147,7 +152,7 @@ export default function codexUsageExtension(pi: ExtensionAPI) {
 	async function refresh(ctx: ExtensionContext) {
 		if (!ctx.hasUI) return;
 		if (!isCodexSubscriptionSession(ctx)) {
-			ctx.ui.setStatus(STATUS_ID, undefined);
+			setUsageLine(ctx, undefined);
 			return;
 		}
 		if (inFlight) return inFlight;
@@ -156,11 +161,11 @@ export default function codexUsageExtension(pi: ExtensionAPI) {
 			try {
 				const snapshot = await queryCodexRateLimits();
 				if (isCodexSubscriptionSession(ctx)) {
-					ctx.ui.setStatus(STATUS_ID, renderStatus(ctx, snapshot));
+					setUsageLine(ctx, renderStatus(ctx, snapshot));
 				}
 			} catch {
 				if (isCodexSubscriptionSession(ctx)) {
-					ctx.ui.setStatus(STATUS_ID, ctx.ui.theme.fg("warning", "Codex usage ?"));
+					setUsageLine(ctx, ctx.ui.theme.fg("warning", "Codex usage ?"));
 				}
 			} finally {
 				inFlight = undefined;
@@ -172,14 +177,14 @@ export default function codexUsageExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		if (isCodexSubscriptionSession(ctx)) {
-			ctx.ui.setStatus(STATUS_ID, ctx.ui.theme.fg("accent", "Codex usage …"));
+			setUsageLine(ctx, ctx.ui.theme.fg("accent", "Codex usage …"));
 		}
 		await refresh(ctx);
 	});
 
 	pi.on("model_select", async (_event, ctx) => {
 		if (isCodexSubscriptionSession(ctx)) {
-			ctx.ui.setStatus(STATUS_ID, ctx.ui.theme.fg("accent", "Codex usage …"));
+			setUsageLine(ctx, ctx.ui.theme.fg("accent", "Codex usage …"));
 		}
 		await refresh(ctx);
 	});
@@ -189,11 +194,11 @@ export default function codexUsageExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
-		ctx.ui.setStatus(STATUS_ID, undefined);
+		setUsageLine(ctx, undefined);
 	});
 
 	pi.registerCommand("codex-usage", {
-		description: "Refresh Codex 5h/7d used percentage in the footer",
+		description: "Refresh Codex 5h/7d used percentage below the editor",
 		handler: async (_args, ctx) => {
 			await refresh(ctx);
 		},

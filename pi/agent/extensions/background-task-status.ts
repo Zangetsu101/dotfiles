@@ -8,7 +8,7 @@ const STATUS_KEY = "background-tasks"
 
 export function formatRunningTasks(tasks: BackgroundTask[], nodeId?: string, now = Date.now()): string | undefined {
   const running = tasks.filter((task) => task.status === "running" && task.id !== nodeId)
-  const reported = tasks.filter((task) => task.kind === "agent" && task.progress && task.id !== nodeId)
+  const reported = running.filter((task) => task.kind === "agent" && task.progress)
   if (!running.length && !reported.length) return undefined
   const agents = running.filter((task) => task.kind === "agent").length
   const monitors = running.filter((task) => task.kind === "monitor").length
@@ -19,8 +19,7 @@ export function formatRunningTasks(tasks: BackgroundTask[], nodeId?: string, now
   const activities = reported.map((task) => {
     const progress = task.progress!
     const compact = { ...progress, latest: { ...progress.latest, activity: [...progress.latest.activity.replace(/[\x00-\x1f\x7f-\x9f]/g, " ")].slice(0, 60).join(""), help: undefined } }
-    const runtime = (task.status === "failed" && progress.latest.state !== "failed") || task.status === "terminated" || task.status === "interrupted" ? `runtime ${task.status}; ` : ""
-    return `${task.label}: ${runtime}${describeAgentProgress(compact, now)}`
+    return `${task.label}: ${describeAgentProgress(compact, now)}`
   })
   return `tasks: ${[...parts, ...activities].join(" · ")}`
 }
