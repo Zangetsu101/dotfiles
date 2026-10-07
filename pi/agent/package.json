@@ -6,7 +6,7 @@
     "check": "node scripts/sync-pi-dependencies.mjs --check && npm test && tsc --noEmit",
     "eval:background-monitor": "node --experimental-strip-types evals/background-monitor/run.ts",
     "sync:pi": "node scripts/sync-pi-dependencies.mjs",
-    "test": "node --experimental-strip-types --test tests/**/*.test.ts"
+    "test": "node --experimental-strip-types --test --test-reporter=spec tests/**/*.test.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "1.0.4",
