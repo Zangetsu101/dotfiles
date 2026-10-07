@@ -79,7 +79,7 @@ test("status line shows running activity age and clears finished assignments", (
   const completed = { ...working, status: "succeeded" as const, progress: { ...working.progress, latest: { ...working.progress.latest, state: "completed" as const, activity: "Tests pass" } } }
   for (const status of ["succeeded", "failed", "terminated", "interrupted", "completed"] as const) {
     assert.equal(formatRunningTasks([{ ...completed, status }], undefined, 6000), undefined)
-    assert.equal(formatRunningTasks([working, { ...completed, status }], undefined, 6000), formatRunningTasks([working], undefined, 6000))
+    assert.equal(formatRunningTasks([working, { ...completed, status }], undefined, 6000), "tasks: 1 agent · tests: blocked: Waiting for token (5s ago)")
   }
 })
 
