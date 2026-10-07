@@ -1,48 +1,15 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { BackgroundTasks, type TmuxProcessAdapter } from "../extensions/lib/background-task.ts"
+import { BackgroundTasks } from "../extensions/lib/background-task.ts"
+import { FakeTmuxProcessAdapter } from "./support/background-task-runtime.ts"
 
-class RecordingTmux implements TmuxProcessAdapter {
+class RecordingTmux extends FakeTmuxProcessAdapter {
   calls: string[][] = []
-  session = ""
-  windows = new Map<string, string>()
-  panes: Array<{ id: string; window: string }> = []
-  sessionMetadata = new Map<string, string>()
-  nextWindow = 1
-  nextPane = 1
-
+  get windows() { return new Map([...this.sessions.values()].flatMap((session) => [...session.windows.values()].map((window) => [window.id, window.name] as const))) }
+  get panes() { return [...this.sessions.values()].flatMap((session) => [...session.windows.values()].flatMap((window) => [...window.panes.values()].map((pane) => ({ id: pane.id, window: window.id })))) }
   async run(args: string[]): Promise<string> {
     this.calls.push(args)
-    if (args[0] === "-V") return "tmux fake"
-    if (args[0] === "list-sessions") {
-      if (!this.session) return ""
-      const format = args[args.indexOf("-F") + 1] ?? "#{session_name}"
-      return format.replace("#{session_id}", this.session).replace("#{session_name}", "dotfiles").replace(/#\{(@[^}]+)\}/g, (_match, key) => this.sessionMetadata.get(key) ?? "")
-    }
-    if (args[0] === "new-session") {
-      this.session = `$${this.nextWindow++}`
-      return this.session
-    }
-    if (args[0] === "new-window") {
-      const id = `@${this.nextWindow++}`
-      this.windows.set(id, args[args.indexOf("-n") + 1]!)
-      return id
-    }
-    if (args[0] === "split-window") {
-      const id = `%${this.nextPane++}`
-      const window = args[args.indexOf("-t") + 1]!
-      this.panes.push({ id, window })
-      return id
-    }
-    if (args[0] === "set-option" && !args.includes("-w") && !args.includes("-p")) {
-      const target = args.indexOf("-t")
-      this.sessionMetadata.set(args[target + 2]!, args[target + 3] ?? "")
-      return ""
-    }
-    if (args[0] === "show-options") return this.sessionMetadata.get(args.at(-1)!) ?? ""
-    if (args[0] === "list-windows") return ""
-    if (args[0] === "list-panes") return ""
-    return ""
+    return super.run(args)
   }
 }
 
@@ -139,6 +106,6 @@ test("subtree termination cascades and cleanup refuses while any descendant runs
 
   const signals = tmux.calls.filter((call) => call[0] === "send-keys").map((call) => call[call.indexOf("-t") + 1])
   assert.deepEqual(new Set(signals), new Set([parent.target, child.target]))
-  assert.equal(parent.status, "terminated")
-  assert.equal(child.status, "terminated")
+  assert.equal((await tasks.resolve(parent.id, { familyId: base.familyId }))?.status, "terminated")
+  assert.equal((await tasks.resolve(child.id, { familyId: base.familyId }))?.status, "terminated")
 })

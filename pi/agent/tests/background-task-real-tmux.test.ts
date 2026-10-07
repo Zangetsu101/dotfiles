@@ -8,6 +8,10 @@ const execFileAsync = promisify(execFile)
 const tmux = async (socket: string, args: string[]): Promise<string> =>
   (await execFileAsync("tmux", ["-L", socket, ...args], { encoding: "utf8" })).stdout.trim()
 
+function sizedTmux(socket: string, width: number, height: number): TmuxProcessAdapter {
+  return { run: (args) => tmux(socket, args[0] === "new-session" ? [args[0], "-x", String(width), "-y", String(height), ...args.slice(1)] : args) }
+}
+
 async function tmuxAvailable(): Promise<boolean> {
   try { await execFileAsync("tmux", ["-V"]); return true } catch { return false }
 }
@@ -20,6 +24,40 @@ async function waitFor<T>(read: () => Promise<T>, accept: (value: T) => boolean)
   }
   throw new Error("condition was not reached")
 }
+
+test("short wide real tmux windows use available horizontal space before creating another pool", async (t) => {
+  if (!(await tmuxAvailable())) return t.skip("tmux is not installed")
+  const socket = `pi-wide-pool-${process.pid}-${Date.now()}`
+  t.after(() => tmux(socket, ["kill-server"]).catch(() => undefined))
+  const tasks = new BackgroundTasks(sizedTmux(socket, 80, 2))
+  const input = { familyId: "wide-family", rootId: "wide-root", parentId: "wide-root", kind: "monitor" as const, label: "wide", cwd: process.cwd(), command: "/bin/sh", args: ["-c", "sleep 60"], remainOnExit: true }
+  const first = await tasks.create(input)
+  const second = await tasks.create(input)
+  assert.equal(second.poolWindow, first.poolWindow)
+  assert.equal((await tasks.list({ familyId: input.familyId })).length, 2)
+})
+
+test("tiny real tmux pools preserve finished output and running work when another split cannot fit", async (t) => {
+  if (!(await tmuxAvailable())) return t.skip("tmux is not installed")
+  const socket = `pi-small-pool-${process.pid}-${Date.now()}`
+  t.after(() => tmux(socket, ["kill-server"]).catch(() => undefined))
+  const adapter = sizedTmux(socket, 2, 2)
+  const tasks = new BackgroundTasks(adapter)
+  const input = { familyId: "tiny-family", rootId: "tiny-root", parentId: "tiny-root", kind: "monitor" as const, label: "tiny", cwd: process.cwd(), command: "/bin/sh", args: ["-c", "printf saved"], remainOnExit: true }
+  const first = await tasks.create(input)
+  await waitFor(() => tasks.completion(first), Boolean)
+  const second = await tasks.create({ ...input, args: ["-c", "printf active; sleep 60"] })
+  const third = await tasks.create(input)
+  assert.notEqual(first.poolWindow, second.poolWindow)
+  assert.notEqual(second.poolWindow, third.poolWindow)
+  assert.match((await tmux(socket, ["capture-pane", "-p", "-t", first.target, "-S", "-"])).replaceAll(/\s/g, ""), /saved/)
+  assert.equal(await tmux(socket, ["display-message", "-p", "-t", second.target, "#{pane_dead}"]), "0")
+  const resumed = new BackgroundTasks(adapter)
+  assert.equal((await resumed.list({ familyId: input.familyId })).length, 3)
+  await resumed.setStatus(first, "succeeded")
+  assert.equal(await resumed.cleanup([first]), 1)
+  assert.deepEqual(new Set((await resumed.list({ familyId: input.familyId })).map((task) => task.id)), new Set([second.id, third.id]))
+})
 
 test("intentional cancellation survives the agent process exiting without a second failure notice", async (t) => {
   if (!(await tmuxAvailable())) return t.skip("tmux is not installed")

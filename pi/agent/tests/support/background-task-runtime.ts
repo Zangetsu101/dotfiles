@@ -32,9 +32,14 @@ export class FakeTmuxProcessAdapter implements TmuxProcessAdapter {
       interactiveAfterCompletion: "interactiveAfterCompletion" in record ? record.interactiveAfterCompletion : false,
     }))
   }
+  private createPane(window: Window, command: string[]): string {
+    const id = `%${this.nextPane++}`
+    window.panes.set(id, { id, windowId: window.id, metadata: new Map(), command, dead: false, retained: false })
+    return id
+  }
   private records() { return [...this.sessions.values()].flatMap((session) => [...session.windows.values()].flatMap((window) => [window, ...window.panes.values()])) }
   private session(target = "") { return this.sessions.get(target) ?? [...this.sessions.values()].find((item) => item.name === target) }
-  private window(target = "") { return this.records().find((item): item is Window => "panes" in item && (item.id === target || `${this.sessions.get(item.sessionId)?.name}:${item.name}` === target)) }
+  private window(target = "") { return this.records().find((item): item is Window => "panes" in item && (item.id === target || `${item.sessionId}:${item.name}` === target || `${this.sessions.get(item.sessionId)?.name}:${item.name}` === target)) }
   private pane(target = "") { return this.records().find((item): item is Pane => "windowId" in item && item.id === target) }
   private record(target = "") { return this.pane(target) ?? this.window(target) ?? this.session(target) }
   private format(template: string, values: Record<string, string>, metadata: Map<string, string>) {
@@ -65,13 +70,18 @@ export class FakeTmuxProcessAdapter implements TmuxProcessAdapter {
     }
     if (action === "new-window") {
       const session = this.session(option(args, "-t"))!; const id = `@${this.nextWindow++}`; const name = option(args, "-n") ?? id
-      session.windows.set(id, { id, sessionId: session.id, name, metadata: new Map(), panes: new Map(), command: args, interactiveAfterCompletion: args.join("\n").includes('exec "${SHELL:-/bin/bash}" -l') })
+      const window: Window = { id, sessionId: session.id, name, metadata: new Map(), panes: new Map(), command: args, interactiveAfterCompletion: args.join("\n").includes('exec "${SHELL:-/bin/bash}" -l') }
+      session.windows.set(id, window)
+      if (option(args, "-F") === "#{pane_id}\t#{window_id}") {
+        return `${this.createPane(window, args)}\t${id}`
+      }
       return id
     }
     if (action === "split-window") {
-      const window = this.window(option(args, "-t"))!; const id = `%${this.nextPane++}`
-      window.panes.set(id, { id, windowId: window.id, metadata: new Map(), command: args, dead: false, retained: false })
-      return id
+      const target = option(args, "-t")
+      const window = this.window(target) ?? this.window(this.pane(target)?.windowId)
+      if (!window) throw new Error(`unknown window: ${target}`)
+      return this.createPane(window, args)
     }
     if (action === "set-option") {
       const target = option(args, "-t") ?? this.currentSession; const record = this.record(target); if (!record) return ""
@@ -91,7 +101,7 @@ export class FakeTmuxProcessAdapter implements TmuxProcessAdapter {
     }
     if (action === "list-panes") {
       const format = option(args, "-F") ?? "#{pane_id}"
-      return [...this.sessions.values()].flatMap((session) => [...session.windows.values()].flatMap((window) => [...window.panes.values()].map((pane) => this.format(format, { session_id: session.id, session_name: session.name, window_id: window.id, window_name: window.name, pane_id: pane.id }, pane.metadata)))).join("\n")
+      return [...this.sessions.values()].flatMap((session) => [...session.windows.values()].filter((window) => !option(args, "-t") || option(args, "-t") === window.id).flatMap((window) => [...window.panes.values()].map((pane) => this.format(format, { pane_width: "80", pane_height: "24", session_id: session.id, session_name: session.name, window_id: window.id, window_name: window.name, pane_id: pane.id }, pane.metadata)))).join("\n")
     }
     if (action === "display-message") { const target = option(args, "-t"); const format = args.at(-1) ?? ""; const session = this.session(target) ?? (this.window(target) ? this.sessions.get(this.window(target)!.sessionId) : undefined); return format.includes("session_name") ? session?.name ?? "" : this.currentSession }
     if (action === "rename-session") { const session = this.session(option(args, "-t")); if (session) session.name = args.at(-1)!; return "" }

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { mkdir, mkdtemp, open, readFile, readdir, rename, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
@@ -70,6 +70,9 @@ function siblingOrdinal(task: BackgroundTask, label: string): number {
   if (localName === label) return 1
   const suffix = localName.startsWith(`${label} (`) ? Number.parseInt(localName.slice(label.length + 2, -1), 10) : 0
   return Number.isFinite(suffix) ? suffix : 0
+}
+function tmuxDiagnostic(error: unknown): string {
+  return (error instanceof Error && "stderr" in error ? String(error.stderr) : error instanceof Error ? error.message : String(error)).trim()
 }
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`
@@ -226,6 +229,7 @@ export class BackgroundTasks {
           ]
           await Promise.all(metadata.map(([key, value]) => this.tmux.run(["set-option", "-t", session, key, value])))
         }
+        if (input.kind === "monitor") await this.list(undefined, true)
         const siblings = [...this.known.values()].filter((task) => task.familyId === familyId && task.parentId === parentId && task.label === input.label)
         const allocation = await this.nextSiblingOrdinal(session, parentId, input.label, siblings)
         const suffix = allocation.ordinal === 1 ? "" : ` (${allocation.ordinal})`
@@ -241,22 +245,27 @@ export class BackgroundTasks {
           target = await this.tmux.run(["new-window", "-d", "-P", "-F", "#{window_id}", "-t", session, "-n", displayName, "-c", input.cwd, ...environment, "/bin/bash", "-c", wrapper, "background-task", statusFile, outputFile, ready, input.command, ...input.args])
           target ||= `${session}:${displayName}`; createdWindow = target
         } else {
-          let pool = (this.pools.get(familyId) ?? []).find((candidate) => candidate.count < 8)
-          const createdPool = !pool
-          if (!pool) {
+          const command = ["-c", input.cwd, ...environment, "/bin/bash", "-c", wrapper, "background-task", statusFile, outputFile, ready, input.command, ...input.args]
+          startedAt = Date.now()
+          for (const pool of this.pools.get(familyId) ?? []) {
+            if (pool.count >= 8) continue
+            target = await this.splitMonitor(pool.window, command)
+            if (!target) continue
+            pool.count++
+            poolWindow = pool.window
+            break
+          }
+          if (!target) {
             const number = (this.pools.get(familyId)?.length ?? 0) + 1
             const name = number === 1 ? "monitors" : `monitors (${number})`
-            const window = await this.tmux.run(["new-window", "-d", "-P", "-F", "#{window_id}", "-t", session, "-n", name, "/bin/sh", "-c", "exec sleep 2147483647"])
-            pool = { window: window || `${session}:${name}`, count: 0 }
-            this.pools.set(familyId, [...(this.pools.get(familyId) ?? []), pool])
-            createdWindow = pool.window
+            const result = await this.tmux.run(["new-window", "-d", "-P", "-F", "#{pane_id}\t#{window_id}", "-t", session, "-n", name, ...command])
+            const [pane, window] = result.split("\t")
+            target = pane
+            poolWindow = window
+            createdWindow = window
+            this.pools.set(familyId, [...(this.pools.get(familyId) ?? []), { window, count: 1 }])
           }
-          startedAt = Date.now()
-          target = await this.tmux.run(["split-window", "-d", "-P", "-F", "#{pane_id}", "-t", pool.window, "-c", input.cwd, ...environment, "/bin/bash", "-c", wrapper, "background-task", statusFile, outputFile, ready, input.command, ...input.args])
-          pool.count++
-          poolWindow = pool.window
-          target ||= pool.window
-          if (createdPool) await this.tmux.run(["kill-pane", "-t", `${pool.window}.0`]).catch(() => undefined)
+          await this.tmux.run(["select-layout", "-t", target, "tiled"]).catch(() => undefined)
         }
         const task: BackgroundTask = { id, familyId, rootId, kind: input.kind, label: input.label, displayName, status: "running", startedAt, target, parent: parentId, parentId, parentTarget: input.parentTarget ?? input.parent ?? rootPane, rootPane, poolWindow, cwd: input.cwd, statusFile, outputFile, storageMode: "family" }
         const values: Record<(typeof keys)[number], string> = { kind: task.kind, id, label: task.label, display_name: displayName, status: "running", started_at: String(startedAt), parent: parentId, parent_id: parentId, parent_target: task.parentTarget ?? "", family_id: familyId, root_id: rootId, root_pane: rootPane, pool_window: poolWindow ?? "", cwd: task.cwd, status_file: statusFile, output_file: outputFile }
@@ -275,12 +284,44 @@ export class BackgroundTasks {
         if (createdSession) await this.tmux.run(["kill-window", "-t", `${session}:bootstrap`]).catch(() => undefined)
         return task
       } catch (error) {
-        if (target) await this.tmux.run([input.kind === "agent" ? "kill-window" : "kill-pane", "-t", target]).catch(() => undefined)
-        else if (createdWindow) await this.tmux.run(["kill-window", "-t", createdWindow]).catch(() => undefined)
-        if (createdSession) await this.tmux.run(["kill-session", "-t", session]).catch(() => undefined)
+        if (createdWindow) await this.tmux.run(["kill-window", "-t", createdWindow]).catch(() => undefined)
+        else if (target) await this.tmux.run([input.kind === "agent" ? "kill-window" : "kill-pane", "-t", target]).catch(() => undefined)
+        if (poolWindow) {
+          const pools = this.pools.get(familyId) ?? []
+          const pool = pools.find((candidate) => candidate.window === poolWindow)
+          if (pool) pool.count--
+          this.pools.set(familyId, pools.filter((candidate) => candidate.count > 0))
+        }
+        if (createdSession) {
+          await this.tmux.run(["kill-session", "-t", session]).catch(() => undefined)
+          this.sessions.delete(familyId)
+          this.pools.delete(familyId)
+        }
+        if (target || createdWindow) await this.invalidateMetadata().catch(() => undefined)
+        await rm(directory, { recursive: true, force: true }).catch(() => undefined)
         throw error
       }
     }))
+  }
+
+  private async splitMonitor(window: string, command: string[]): Promise<string> {
+    const listing = await this.tmux.run(["list-panes", "-t", window, "-F", "#{pane_id}\t#{pane_width}\t#{pane_height}"])
+    const panes = listing.split("\n").filter(Boolean).map((line) => {
+      const [target, width, height] = line.split("\t")
+      return { target, width: Number(width), height: Number(height) }
+    }).sort((a, b) => b.width * b.height - a.width * a.height)
+    if (panes.length >= 8) return ""
+    for (const pane of panes) {
+      const orientations = pane.width > pane.height * 2 ? ["-h", "-v"] : ["-v", "-h"]
+      for (const orientation of orientations) {
+        try {
+          return await this.tmux.run(["split-window", "-d", orientation, "-P", "-F", "#{pane_id}", "-t", pane.target, ...command])
+        } catch (error) {
+          if (!/^(?:no space for new pane|pane too small)$/.test(tmuxDiagnostic(error))) throw error
+        }
+      }
+    }
+    return ""
   }
 
   private async familySession(familyId: string): Promise<string> {
@@ -412,6 +453,7 @@ export class BackgroundTasks {
       familyPools.set(task.poolWindow, (familyPools.get(task.poolWindow) ?? 0) + 1)
       poolCounts.set(task.familyId, familyPools)
     }
+    if (liveOnly) this.pools.clear()
     for (const [familyId, familyPools] of poolCounts) {
       this.pools.set(familyId, [...familyPools].map(([window, count]) => ({ window, count })))
     }
