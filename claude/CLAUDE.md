@@ -1,4 +1,4 @@
-@~/.agents/AGENT.md
+@~/.agents/AGENTS.md
 
 ## Model selection (subagents & workflows)
 
