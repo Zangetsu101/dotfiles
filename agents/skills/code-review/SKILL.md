@@ -17,7 +17,7 @@ If the user requests staged changes or the index against `HEAD`, use staged mode
 
 Record the mode and commands for both reviewers:
 
-- **Committed**: resolve the fixed point with `git rev-parse <fixed-point>`. Diff: `git diff <fixed-point>...HEAD`. Commits: `git log <fixed-point>..HEAD --oneline`.
+- **Committed**: resolve the fixed point with `git rev-parse <fixed-point>`. Diff: `git diff <fixed-point>...HEAD`. Commits: `git log <fixed-point>..HEAD --format='%h %s%n%n%b'`.
 - **Staged**: diff: `git diff --cached HEAD`. Commit list: `none; uncommitted changes`. Only staged changes are in scope, including staged additions and deletions. Read index contents with `git show :<path>` when inspecting the reviewed version of a file; working-tree contents may include unstaged changes.
 
 Confirm the selected diff is non-empty. Stop on a bad ref or empty diff.
