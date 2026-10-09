@@ -1,6 +1,12 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { EventEmitter } from "node:events"
+import { visibleWidth } from "@earendil-works/pi-tui"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { reportAgentProgress } from "../extensions/lib/background-progress.ts"
+import { familyForContext } from "../extensions/lib/background-family.ts"
 import backgroundTaskStatusExtension, { formatRunningTasks } from "../extensions/background-task-status.ts"
 import type { BackgroundTask } from "../extensions/lib/background-task.ts"
 
@@ -8,7 +14,7 @@ function task(kind: BackgroundTask["kind"], status: BackgroundTask["status"]): B
   return { id: `${kind}-${status}`, kind, label: kind, status, target: kind, parent: "", cwd: "/repo", statusFile: "/tmp/status" }
 }
 
-test("statusline follows authoritative metadata and releases its subscription on shutdown", async () => {
+test("statusline follows authoritative metadata and releases its subscription on shutdown", async (t) => {
   const handlers = new Map<string, (event: any, ctx: any) => any>()
   const statuses: Array<string | undefined> = []
   let notify: ((tasks: BackgroundTask[]) => void) | undefined
@@ -23,9 +29,10 @@ test("statusline follows authoritative metadata and releases its subscription on
   const ctx = {
     hasUI: true, cwd: "/repo",
     sessionManager: { getSessionId: () => "status-runtime", getBranch: () => [] },
-    ui: { setStatus: (_key: string, status: string | undefined) => statuses.push(status) },
+    ui: { setStatus: (_key: string, status: string | undefined) => statuses.push(status), setWidget: () => {} },
   }
   backgroundTaskStatusExtension(pi, { tasks: tasks as any })
+  t.after(() => handlers.get("session_shutdown")!({}, ctx))
   await handlers.get("session_start")!({ reason: "startup" }, ctx)
   notify!([task("agent", "running"), task("monitor", "running")])
   assert.equal(statuses.at(-1), "1 agent · 1 monitor")
@@ -36,10 +43,11 @@ test("statusline follows authoritative metadata and releases its subscription on
   assert.equal(statuses.at(-1), undefined)
 })
 
-test("pending status subscriptions cannot update UI or survive shutdown or a newer tree restore", async () => {
+test("pending status subscriptions cannot update UI or survive shutdown or a newer tree restore", async (t) => {
   for (const replacement of ["session_shutdown", "session_tree"]) {
     const handlers = new Map<string, (event: any, ctx: any) => any>()
     const statuses: Array<string | undefined> = []
+    const widgets: unknown[] = []
     const pending: Array<{ notify: (tasks: BackgroundTask[]) => void; release: () => void }> = []
     const listeners = new Set<unknown>()
     const tasks = {
@@ -54,18 +62,21 @@ test("pending status subscriptions cannot update UI or survive shutdown or a new
     const ctx = {
       hasUI: true, cwd: "/repo",
       sessionManager: { getSessionId: () => "status-race", getBranch: () => [] },
-      ui: { setStatus: (_key: string, status: string | undefined) => statuses.push(status) },
+      ui: { setStatus: (_key: string, status: string | undefined) => statuses.push(status), setWidget: (_key: string, widget: unknown) => widgets.push(widget) },
     }
     backgroundTaskStatusExtension(pi, { tasks: tasks as any })
+    t.after(() => handlers.get("session_shutdown")!({}, ctx))
     const old = handlers.get("session_start")!({ reason: "startup" }, ctx)
     const next = handlers.get(replacement)!({}, ctx)
     if (replacement === "session_tree") pending[1]!.release()
     await next
     const before = [...statuses]
+    const widgetsBefore = [...widgets]
     pending[0]!.release()
     await old
-    pending[0]!.notify([task("monitor", "running")])
+    pending[0]!.notify([task("agent", "running"), { ...task("agent", "running"), id: "second" }])
     assert.deepEqual(statuses, before)
+    assert.deepEqual(widgets, widgetsBefore)
     assert.equal(listeners.size, replacement === "session_tree" ? 1 : 0)
     await handlers.get("session_shutdown")!({}, ctx)
     assert.equal(listeners.size, 0)
@@ -81,6 +92,93 @@ test("status line shows running activity age and clears finished assignments", (
     assert.equal(formatRunningTasks([{ ...completed, status }], undefined, 6000), undefined)
     assert.equal(formatRunningTasks([working, { ...completed, status }], undefined, 6000), "1 agent · blocked · Waiting for token · updated 5s ago")
   }
+})
+
+test("multiple agents get individual widget lines and clear them on transitions", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 20000 })
+  const handlers = new Map<string, (event: any, ctx: any) => any>()
+  let notify!: (tasks: BackgroundTask[]) => void
+  let widget: any
+  let status: string | undefined
+  const ctx = {
+    hasUI: true, cwd: "/repo",
+    sessionManager: { getSessionId: () => "widget-runtime", getBranch: () => [] },
+    ui: {
+      setStatus: (_key: string, value: string | undefined) => { status = value },
+      setWidget: (_key: string, value: any) => { widget = value },
+    },
+  }
+  backgroundTaskStatusExtension({ on: (name: string, handler: any) => handlers.set(name, handler) } as any, {
+    tasks: { async watchMetadata(_query: unknown, listener: typeof notify) { notify = listener; return () => {} } } as any,
+  })
+  t.after(() => handlers.get("session_shutdown")!({}, ctx))
+  await handlers.get("session_start")!({ reason: "startup" }, ctx)
+  const working = { ...task("agent", "running"), label: "Tests\nwide", progress: { assignment: "one", latest: { id: "report", state: "blocked" as const, activity: "Waiting\nfor token", at: Date.now() - 5000 }, history: [] } }
+  const second = { ...task("agent", "running"), id: "second", label: "Docs", startedAt: Date.now() - 10000 }
+  notify([working, second, task("monitor", "running")])
+  assert.equal(status, "2 agents · 1 monitor")
+  const render = (width: number) => widget(undefined, { fg: (_color: string, text: string) => text }).render(width)
+  assert.match(render(120)[0], /^Tests wide · blocked · Waiting for token · updated 5s ago$/)
+  assert.match(render(120)[1], /^Docs · running · awaiting progress · running 10s$/)
+  assert.equal(render(20).length, 2)
+  assert.ok(render(20).every((line: string) => visibleWidth(line) <= 20))
+  notify([working, task("monitor", "running")])
+  assert.equal(widget, undefined)
+  notify([working, second])
+  await handlers.get("session_tree")!({}, ctx)
+  assert.equal(widget, undefined)
+  notify([working, second])
+  await handlers.get("session_shutdown")!({}, ctx)
+  assert.equal(widget, undefined)
+  notify([working, second])
+  assert.equal(widget, undefined)
+})
+
+test("widget reads progress files and excludes the caller and finished agents", { timeout: 3000 }, async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 20000 })
+  const directory = await mkdtemp(join(tmpdir(), "task-status-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const statusFile = join(directory, "agent")
+  await reportAgentProgress(statusFile, { state: "working", activity: "Checking 界 tests", at: Date.now() })
+  const handlers = new Map<string, (event: any, ctx: any) => any>()
+  let notify!: (tasks: BackgroundTask[]) => void
+  let refreshed!: () => void
+  const ready = new Promise<void>((resolve) => { refreshed = resolve })
+  let lines: string[] = []
+  const ctx = {
+    hasUI: true, cwd: "/repo",
+    sessionManager: { getSessionId: () => "progress-runtime", getBranch: () => [] },
+    ui: {
+      setStatus: () => {},
+      setWidget: (_key: string, factory: any) => {
+        if (!factory) { lines = []; return }
+        const component = factory(undefined, { fg: (_color: string, text: string) => text })
+        lines = component.render(120)
+        assert.ok(component.render(20).every((line: string) => visibleWidth(line) <= 20))
+        if (lines.some((line) => line.includes("Checking 界 tests"))) refreshed()
+      },
+    },
+  }
+  backgroundTaskStatusExtension({ on: (name: string, handler: any) => handlers.set(name, handler) } as any, {
+    tasks: { async watchMetadata(_query: unknown, listener: typeof notify) { notify = listener; return () => {} } } as any,
+  })
+  t.after(() => handlers.get("session_shutdown")!({}, ctx))
+  await handlers.get("session_start")!({ reason: "startup" }, ctx)
+  notify([
+    { ...task("agent", "running"), label: "Tests", statusFile },
+    { ...task("agent", "running"), id: "second", label: "Docs", statusFile: join(directory, "second") },
+    { ...task("agent", "succeeded"), label: "Finished" },
+    { ...task("agent", "running"), id: familyForContext("startup", ctx).nodeId, label: "Self" },
+  ])
+  await ready
+  assert.equal(lines.length, 2)
+  assert.match(lines[0], /^Tests · working · Checking 界 tests · updated 0s ago$/)
+  assert.equal(lines[1], "Docs · running · awaiting progress · age unknown")
+})
+
+test("multiple agents keep activities out of the count summary", () => {
+  const working = { ...task("agent", "running"), progress: { assignment: "one", latest: { id: "report", state: "working" as const, activity: "Reading tests", at: 1000 }, history: [] } }
+  assert.equal(formatRunningTasks([working, { ...working, id: "second" }, task("monitor", "running")], undefined, 6000), "2 agents · 1 monitor")
 })
 
 test("a spawned agent does not count itself, but counts its descendants", () => {

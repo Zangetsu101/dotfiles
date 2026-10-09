@@ -1,10 +1,35 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
+import { truncateToWidth } from "@earendil-works/pi-tui"
 import { BackgroundTasks, type BackgroundTask } from "./lib/background-task.ts"
 import { familyForContext } from "./lib/background-family.ts"
 
 import { readAgentProgress } from "./lib/background-progress.ts"
 
 const STATUS_KEY = "background-tasks"
+const replaceControlCharacters = (text: string) => text.replace(/[\x00-\x1f\x7f-\x9f]/g, " ")
+
+function updateUI(ctx: ExtensionContext, tasks: BackgroundTask[], nodeId: string) {
+  ctx.ui.setStatus(STATUS_KEY, formatRunningTasks(tasks, nodeId))
+  const agents = tasks.filter((task) => task.status === "running" && task.kind === "agent" && task.id !== nodeId)
+  if (agents.length < 2) {
+    ctx.ui.setWidget(STATUS_KEY, undefined)
+    return
+  }
+  ctx.ui.setWidget(STATUS_KEY, (_tui, theme) => ({
+    render(width) {
+      const now = Date.now()
+      return agents.map((task) => {
+        const report = task.progress?.latest
+        const age = Math.max(0, Math.floor((now - (report?.at ?? task.startedAt ?? now)) / 1000))
+        const detail = report
+          ? `${report.state} · ${replaceControlCharacters(report.activity)} · updated ${age}s ago`
+          : `running · awaiting progress · ${task.startedAt === undefined ? "age unknown" : `running ${age}s`}`
+        return truncateToWidth(theme.fg("muted", `${replaceControlCharacters(task.label)} · ${detail}`), width)
+      })
+    },
+    invalidate() {},
+  }), { placement: "aboveEditor" })
+}
 
 export function formatRunningTasks(tasks: BackgroundTask[], nodeId?: string, now = Date.now()): string | undefined {
   const running = tasks.filter((task) => task.status === "running" && task.id !== nodeId)
@@ -16,9 +41,9 @@ export function formatRunningTasks(tasks: BackgroundTask[], nodeId?: string, now
     agents ? `${agents} agent${agents === 1 ? "" : "s"}` : "",
     monitors ? `${monitors} monitor${monitors === 1 ? "" : "s"}` : "",
   ].filter(Boolean)
-  const activities = reported.map((task) => {
+  const activities = (agents === 1 ? reported : []).map((task) => {
     const report = task.progress!.latest
-    const activity = [...report.activity.replace(/[\x00-\x1f\x7f-\x9f]/g, " ")].slice(0, 60).join("")
+    const activity = [...replaceControlCharacters(report.activity)].slice(0, 60).join("")
     const age = Math.max(0, Math.floor((now - report.at) / 1000))
     return `${report.state} · ${activity} · updated ${age}s ago`
   })
@@ -38,6 +63,10 @@ export default function (pi: ExtensionAPI, options: { tasks?: BackgroundTasks } 
     stopMetadata = undefined
     if (ageTimer) clearInterval(ageTimer)
     ageTimer = undefined
+    if (ctx.hasUI) {
+      ctx.ui.setStatus(STATUS_KEY, undefined)
+      ctx.ui.setWidget(STATUS_KEY, undefined)
+    }
     if (shuttingDown || !ctx.hasUI) return
     const family = familyForContext(reason, ctx, pi.getSessionName?.())
     let visibleTasks: BackgroundTask[] = []
@@ -48,14 +77,14 @@ export default function (pi: ExtensionAPI, options: { tasks?: BackgroundTasks } 
       try {
         const snapshot = visibleTasks
         const enriched = await Promise.all(snapshot.map(async (task) => task.kind === "agent" ? { ...task, progress: await readAgentProgress(task.statusFile) } : task))
-        if (!shuttingDown && restoring === generation && snapshot === visibleTasks) ctx.ui.setStatus(STATUS_KEY, formatRunningTasks(enriched, family.nodeId))
+        if (!shuttingDown && restoring === generation && snapshot === visibleTasks) updateUI(ctx, enriched, family.nodeId)
       } finally { updating = false }
     }
     ageTimer = setInterval(() => { void updateProgress().catch((error) => console.error("background task progress:", error)) }, 1000)
     const stop = await tasks.watchMetadata({ subtreeRootId: family.nodeId }, (visible) => {
       if (!shuttingDown && restoring === generation) {
         visibleTasks = visible
-        ctx.ui.setStatus(STATUS_KEY, formatRunningTasks(visible, family.nodeId))
+        updateUI(ctx, visible, family.nodeId)
         void updateProgress().catch((error) => console.error("background task progress:", error))
       }
     })
@@ -73,6 +102,9 @@ export default function (pi: ExtensionAPI, options: { tasks?: BackgroundTasks } 
     ageTimer = undefined
     stopMetadata?.()
     stopMetadata = undefined
-    if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, undefined)
+    if (ctx.hasUI) {
+      ctx.ui.setStatus(STATUS_KEY, undefined)
+      ctx.ui.setWidget(STATUS_KEY, undefined)
+    }
   })
 }
