@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { BackgroundTasks, type BackgroundTask } from "./lib/background-task.ts"
 import { familyForContext } from "./lib/background-family.ts"
 
-import { readAgentProgress, describeAgentProgress } from "./lib/background-progress.ts"
+import { readAgentProgress } from "./lib/background-progress.ts"
 
 const STATUS_KEY = "background-tasks"
 
@@ -17,11 +17,12 @@ export function formatRunningTasks(tasks: BackgroundTask[], nodeId?: string, now
     monitors ? `${monitors} monitor${monitors === 1 ? "" : "s"}` : "",
   ].filter(Boolean)
   const activities = reported.map((task) => {
-    const progress = task.progress!
-    const compact = { ...progress, latest: { ...progress.latest, activity: [...progress.latest.activity.replace(/[\x00-\x1f\x7f-\x9f]/g, " ")].slice(0, 60).join(""), help: undefined } }
-    return `${task.label}: ${describeAgentProgress(compact, now)}`
+    const report = task.progress!.latest
+    const activity = [...report.activity.replace(/[\x00-\x1f\x7f-\x9f]/g, " ")].slice(0, 60).join("")
+    const age = Math.max(0, Math.floor((now - report.at) / 1000))
+    return `${report.state} · ${activity} · updated ${age}s ago`
   })
-  return `tasks: ${[...parts, ...activities].join(" · ")}`
+  return [...parts, ...activities].join(" · ")
 }
 
 export default function (pi: ExtensionAPI, options: { tasks?: BackgroundTasks } = {}) {

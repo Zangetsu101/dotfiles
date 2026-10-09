@@ -28,7 +28,7 @@ test("statusline follows authoritative metadata and releases its subscription on
   backgroundTaskStatusExtension(pi, { tasks: tasks as any })
   await handlers.get("session_start")!({ reason: "startup" }, ctx)
   notify!([task("agent", "running"), task("monitor", "running")])
-  assert.equal(statuses.at(-1), "tasks: 1 agent · 1 monitor")
+  assert.equal(statuses.at(-1), "1 agent · 1 monitor")
   notify!([task("agent", "succeeded")])
   assert.equal(statuses.at(-1), undefined)
   await handlers.get("session_shutdown")!({}, ctx)
@@ -74,12 +74,12 @@ test("pending status subscriptions cannot update UI or survive shutdown or a new
 
 test("status line shows running activity age and clears finished assignments", () => {
   const working = { ...task("agent", "running"), label: "tests", progress: { assignment: "one", latest: { id: "report", state: "blocked" as const, activity: "Waiting for token", at: 1000 }, history: [] } }
-  assert.match(formatRunningTasks([working], undefined, 6000)!, /tests: blocked: Waiting for token \(5s ago\)/)
+  assert.match(formatRunningTasks([working], undefined, 6000)!, /1 agent · blocked · Waiting for token · updated 5s ago/)
   assert.match(formatRunningTasks([working], undefined, 61000)!, /60s ago/)
   const completed = { ...working, status: "succeeded" as const, progress: { ...working.progress, latest: { ...working.progress.latest, state: "completed" as const, activity: "Tests pass" } } }
   for (const status of ["succeeded", "failed", "terminated", "interrupted", "completed"] as const) {
     assert.equal(formatRunningTasks([{ ...completed, status }], undefined, 6000), undefined)
-    assert.equal(formatRunningTasks([working, { ...completed, status }], undefined, 6000), "tasks: 1 agent · tests: blocked: Waiting for token (5s ago)")
+    assert.equal(formatRunningTasks([working, { ...completed, status }], undefined, 6000), "1 agent · blocked · Waiting for token · updated 5s ago")
   }
 })
 
@@ -87,7 +87,7 @@ test("a spawned agent does not count itself, but counts its descendants", () => 
   const self = { ...task("agent", "running"), id: "self", parentId: "root" }
   const child = { ...task("monitor", "running"), id: "child", parentId: "self" }
   assert.equal(formatRunningTasks([self], "self"), undefined)
-  assert.equal(formatRunningTasks([self, child], "self"), "tasks: 1 monitor")
+  assert.equal(formatRunningTasks([self, child], "self"), "1 monitor")
 })
 
 test("status line summarizes only running agents and monitors", () => {
@@ -96,6 +96,6 @@ test("status line summarizes only running agents and monitors", () => {
     { ...task("agent", "running"), id: "agent-two" },
     task("monitor", "running"),
     task("monitor", "completed"),
-  ]), "tasks: 2 agents · 1 monitor")
+  ]), "2 agents · 1 monitor")
   assert.equal(formatRunningTasks([task("agent", "completed")]), undefined)
 })

@@ -375,7 +375,7 @@ test("a monitor inherited by its pool window counts once in the status line", as
   }
   const tasks = new BackgroundTasks(tmux)
   await tasks.create({ ...family, kind: "monitor", label: "build", parentId: "root-one" })
-  assert.equal(formatRunningTasks(await tasks.list({ subtreeRootId: "root-one" }, true), "root-one"), "tasks: 1 monitor")
+  assert.equal(formatRunningTasks(await tasks.list({ subtreeRootId: "root-one" }, true), "root-one"), "1 monitor")
 })
 
 test("resuming in a new root pane updates direct children's parent navigation", async () => {
