@@ -82,14 +82,13 @@ test("pending status subscriptions cannot update UI or survive shutdown or a new
   }
 })
 
-test("status line shows running activity age and clears finished assignments", () => {
+test("status line preserves blockers and clears finished assignments", () => {
   const working = { ...task("agent", "running"), label: "tests", progress: { assignment: "one", latest: { id: "report", state: "blocked" as const, activity: "Waiting for token", at: 1000 }, history: [] } }
-  assert.match(formatRunningTasks([working], undefined, 6000)!, /1 agent · blocked · Waiting for token · updated 5s ago/)
-  assert.match(formatRunningTasks([working], undefined, 61000)!, /60s ago/)
+  assert.equal(formatRunningTasks([working]), "1 agent · blocked · Waiting for token")
   const completed = { ...working, status: "succeeded" as const, progress: { ...working.progress, latest: { ...working.progress.latest, state: "completed" as const, activity: "Tests pass" } } }
   for (const status of ["succeeded", "failed", "terminated", "interrupted", "completed"] as const) {
-    assert.equal(formatRunningTasks([{ ...completed, status }], undefined, 6000), undefined)
-    assert.equal(formatRunningTasks([working, { ...completed, status }], undefined, 6000), "1 agent · blocked · Waiting for token · updated 5s ago")
+    assert.equal(formatRunningTasks([{ ...completed, status }]), undefined)
+    assert.equal(formatRunningTasks([working, { ...completed, status }]), "1 agent · blocked · Waiting for token")
   }
 })
 
@@ -120,7 +119,9 @@ test("multiple agents publish newline progress status and clear them on transiti
   const second = { ...task("agent", "running"), id: "second", label: "Docs", startedAt: Date.now() - 10000 }
   notify([working, second, task("monitor", "running")])
   assert.equal(status, "2 agents · 1 monitor")
-  assert.equal(progress, "Tests wide · blocked · Waiting for token · updated 5s ago\nDocs · running · awaiting progress · running 10s")
+  assert.equal(progress, "Tests wide · blocked · Waiting for token\nDocs · awaiting progress")
+  notify([{ ...working, progress: { ...working.progress, latest: { ...working.progress.latest, state: "working", activity: "b".repeat(51) } } }, second])
+  assert.equal(progress, `Tests wide · ${"b".repeat(49)}…\nDocs · awaiting progress`)
   notify([working, task("monitor", "running")])
   assert.equal(progress, undefined)
   notify([working, second])
@@ -169,13 +170,26 @@ test("progress status reads progress files and excludes the caller and finished 
   ])
   await ready
   assert.equal(lines.length, 2)
-  assert.match(lines[0], /^Tests · working · Checking 界 tests · updated 0s ago$/)
-  assert.equal(lines[1], "Docs · running · awaiting progress · age unknown")
+  assert.equal(lines[0], "Tests · Checking 界 tests")
+  assert.equal(lines[1], "Docs · awaiting progress")
+})
+
+test("single agent activities hide working and cap reports at 50 characters", () => {
+  const working = { ...task("agent", "running"), progress: { assignment: "one", latest: { id: "report", state: "working" as const, activity: "Reading tests", at: 1000 }, history: [] } }
+  for (const [activity, expected] of [
+    ["Reading\ntests", "Reading tests"],
+    ["a".repeat(49), "a".repeat(49)],
+    ["a".repeat(50), "a".repeat(50)],
+    ["a".repeat(51), `${"a".repeat(49)}…`],
+    ["界".repeat(51), `${"界".repeat(49)}…`],
+  ]) {
+    assert.equal(formatRunningTasks([{ ...working, progress: { ...working.progress, latest: { ...working.progress.latest, activity } } }]), `1 agent · ${expected}`)
+  }
 })
 
 test("multiple agents keep activities out of the count summary", () => {
   const working = { ...task("agent", "running"), progress: { assignment: "one", latest: { id: "report", state: "working" as const, activity: "Reading tests", at: 1000 }, history: [] } }
-  assert.equal(formatRunningTasks([working, { ...working, id: "second" }, task("monitor", "running")], undefined, 6000), "2 agents · 1 monitor")
+  assert.equal(formatRunningTasks([working, { ...working, id: "second" }, task("monitor", "running")]), "2 agents · 1 monitor")
 })
 
 test("a spawned agent does not count itself, but counts its descendants", () => {

@@ -7,22 +7,24 @@ import { readAgentProgress } from "./lib/background-progress.ts"
 const STATUS_KEY = "background-tasks"
 const replaceControlCharacters = (text: string) => text.replace(/[\x00-\x1f\x7f-\x9f]/g, " ")
 
+function formatActivity(task: BackgroundTask): string {
+  const report = task.progress!.latest
+  const characters = [...replaceControlCharacters(report.activity)]
+  const activity = characters.length > 50 ? `${characters.slice(0, 49).join("")}…` : characters.join("")
+  return report.state === "working" ? activity : `${report.state} · ${activity}`
+}
+
 function updateUI(ctx: ExtensionContext, tasks: BackgroundTask[], nodeId: string) {
   ctx.ui.setStatus(STATUS_KEY, formatRunningTasks(tasks, nodeId))
   const agents = tasks.filter((task) => task.status === "running" && task.kind === "agent" && task.id !== nodeId)
-  const now = Date.now()
   const lines = agents.length < 2 ? [] : agents.map((task) => {
-    const report = task.progress?.latest
-    const age = Math.max(0, Math.floor((now - (report?.at ?? task.startedAt ?? now)) / 1000))
-    const detail = report
-      ? `${report.state} · ${replaceControlCharacters(report.activity)} · updated ${age}s ago`
-      : `running · awaiting progress · ${task.startedAt === undefined ? "age unknown" : `running ${age}s`}`
+    const detail = task.progress ? formatActivity(task) : "awaiting progress"
     return `${replaceControlCharacters(task.label)} · ${detail}`
   })
   ctx.ui.setStatus(`${STATUS_KEY}-progress`, lines.length ? lines.join("\n") : undefined)
 }
 
-export function formatRunningTasks(tasks: BackgroundTask[], nodeId?: string, now = Date.now()): string | undefined {
+export function formatRunningTasks(tasks: BackgroundTask[], nodeId?: string): string | undefined {
   const running = tasks.filter((task) => task.status === "running" && task.id !== nodeId)
   const reported = running.filter((task) => task.kind === "agent" && task.progress)
   if (!running.length && !reported.length) return undefined
@@ -32,12 +34,7 @@ export function formatRunningTasks(tasks: BackgroundTask[], nodeId?: string, now
     agents ? `${agents} agent${agents === 1 ? "" : "s"}` : "",
     monitors ? `${monitors} monitor${monitors === 1 ? "" : "s"}` : "",
   ].filter(Boolean)
-  const activities = (agents === 1 ? reported : []).map((task) => {
-    const report = task.progress!.latest
-    const activity = [...replaceControlCharacters(report.activity)].slice(0, 60).join("")
-    const age = Math.max(0, Math.floor((now - report.at) / 1000))
-    return `${report.state} · ${activity} · updated ${age}s ago`
-  })
+  const activities = (agents === 1 ? reported : []).map(formatActivity)
   return [...parts, ...activities].join(" · ")
 }
 
