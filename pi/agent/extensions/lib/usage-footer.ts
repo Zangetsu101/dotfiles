@@ -93,7 +93,7 @@ export function registerUsageFooter(pi: ExtensionAPI, { statusId, name, provider
 	});
 
 	pi.registerCommand(statusId, {
-		description: `Refresh ${name} 5h/7d used percentage at the bottom of the footer`,
+		description: `Refresh ${name} subscription usage at the bottom of the footer`,
 		handler: async (_args, ctx) => {
 			await refresh(ctx);
 		},

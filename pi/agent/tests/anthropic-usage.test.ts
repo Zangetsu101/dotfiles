@@ -66,11 +66,11 @@ test("Anthropic usage updates and clears on model change and shutdown", async ()
 test("Anthropic usage shows the 5h reset time and turns red at 75%", async () => {
   const resetsAt = "2026-10-24T15:30:00Z"
   const { statuses, colors } = await startSession(usageResponse({
-    five_hour: { utilization: 80, resets_at: resetsAt },
+    five_hour: { utilization: 75, resets_at: resetsAt },
     seven_day: { utilization: 10, resets_at: "2026-10-30T00:00:00Z" },
   }))
   const resetTime = new Date(resetsAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-  const status = `Claude used 5h:80% (resets ${resetTime}) 7d:10%`
+  const status = `Claude used 5h:75% (resets ${resetTime}) 7d:10%`
   assert.equal(statuses.get("anthropic-usage"), status)
   assert.equal(colors.get(status), "error")
 })
