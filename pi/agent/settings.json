@@ -1,10 +1,11 @@
 {
-  "lastChangelogVersion": "1.0.4",
+  "lastChangelogVersion": "1.4.0",
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-6.1-sol",
   "defaultThinkingLevel": "low",
   "packages": [
-    "npm:pi-vim"
+    "npm:pi-vim",
+    "npm:pi-claude-bridge"
   ],
   "theme": "dark",
   "tuiMode": "regular"
