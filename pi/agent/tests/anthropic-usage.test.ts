@@ -99,5 +99,8 @@ test("Claude bridge usage comes from rate-limit headers without querying the API
   await handlers.get("turn_end")!({}, ctx)
   const resetTime = new Date(1792853400 * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
   assert.equal(statuses.get("anthropic-usage"), `Claude used 5h:3% (resets ${resetTime}) 7d:1%`)
+  await handlers.get("after_provider_response")!({ status: 200, headers: {} }, ctx)
+  await handlers.get("turn_end")!({}, ctx)
+  assert.equal(statuses.get("anthropic-usage"), `Claude used 5h:3% (resets ${resetTime}) 7d:1%`)
   assert.equal(fetched, false)
 })
