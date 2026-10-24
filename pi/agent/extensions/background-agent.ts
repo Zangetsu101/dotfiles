@@ -162,6 +162,7 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
     description: "Report current activity, a blocker and needed help, or your assignment outcome. Routine reports do not interrupt the parent. Set attention for a blocker needing parent help. Completion is your report, not verification.",
     promptGuidelines: [
       "Call background_agent_report before starting assignment work with state working and a short description of your first activity. Call it again when your activity changes so the parent statusline stays current.",
+      "For working or blocked reports, write activity as a short status phrase of at most 50 characters, such as 'Checking category interfaces' or 'Waiting for credentials'. Put blocker details and the requested action in help. The 50-character guidance does not apply to completed or failed reports.",
       "Chat updates alone do not update the parent statusline. Use state blocked with help and attention when you need the parent to intervene. Report completed or failed with the result and caveats when your assignment ends.",
     ],
     parameters: Type.Object({
