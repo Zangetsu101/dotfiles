@@ -3,6 +3,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { relative, resolve, sep } from "node:path";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
+const USAGE_STATUS_IDS = ["codex-usage", "anthropic-usage"];
+
 export function formatTokens(count: number): string {
 	if (count < 1_000) return count.toString();
 	if (count < 10_000) return `${(count / 1_000).toFixed(1)}k`;
@@ -104,7 +106,7 @@ export default function (pi: ExtensionAPI) {
 				];
 				const extensionStatuses = footerData.getExtensionStatuses();
 				const statuses = [...extensionStatuses.entries()]
-					.filter(([key]) => key !== "codex-usage" && key !== "background-tasks-progress")
+					.filter(([key]) => !USAGE_STATUS_IDS.includes(key) && key !== "background-tasks-progress")
 					.sort(([a], [b]) => a.localeCompare(b))
 					.map(([, text]) => sanitizeStatus(text));
 				if (statuses.length) lines.push(truncateToWidth(statuses.join(" "), width, theme.fg("dim", "...")));
@@ -114,8 +116,10 @@ export default function (pi: ExtensionAPI) {
 						lines.push(truncateToWidth(theme.fg("muted", sanitizeStatus(line)), width));
 					}
 				}
-				const codexUsage = extensionStatuses.get("codex-usage");
-				if (codexUsage) lines.push(truncateToWidth(sanitizeStatus(codexUsage), width, theme.fg("dim", "...")));
+				for (const key of USAGE_STATUS_IDS) {
+					const usage = extensionStatuses.get(key);
+					if (usage) lines.push(truncateToWidth(sanitizeStatus(usage), width, theme.fg("dim", "...")));
+				}
 				return lines;
 			},
 		}));

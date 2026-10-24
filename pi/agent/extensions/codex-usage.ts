@@ -1,5 +1,6 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
+import { registerUsageFooter, type UsageWindow } from "./lib/usage-footer.ts";
 
 type RateLimitWindow = {
 	usedPercent: number;
@@ -19,7 +20,6 @@ type RateLimitResponse = {
 	rateLimitsByLimitId?: Record<string, RateLimitSnapshot> | null;
 };
 
-const STATUS_ID = "codex-usage";
 const TIMEOUT_MS = 8000;
 
 function labelForWindow(window: RateLimitWindow): string {
@@ -34,20 +34,17 @@ function labelForWindow(window: RateLimitWindow): string {
 	return window.windowDurationMins ? `${window.windowDurationMins}m` : "?";
 }
 
-function formatResetTime(resetsAt: number | null): string | undefined {
+function resetDate(resetsAt: number | null): Date | undefined {
 	if (!resetsAt) return undefined;
-
-	const resetMs = resetsAt > 1_000_000_000_000 ? resetsAt : resetsAt * 1000;
-	return new Date(resetMs).toLocaleTimeString([], {
-		hour: "numeric",
-		minute: "2-digit",
-	});
+	return new Date(resetsAt > 1_000_000_000_000 ? resetsAt : resetsAt * 1000);
 }
 
-function formatWindow(window: RateLimitWindow): string {
-	const used = Math.round(Math.max(0, Math.min(100, window.usedPercent)));
-	const resetTime = window.windowDurationMins === 300 ? formatResetTime(window.resetsAt) : undefined;
-	return `${labelForWindow(window)}:${used}%${resetTime ? ` (resets ${resetTime})` : ""}`;
+function toUsageWindow(window: RateLimitWindow): UsageWindow {
+	return {
+		label: labelForWindow(window),
+		usedPercent: window.usedPercent,
+		resetsAt: window.windowDurationMins === 300 ? resetDate(window.resetsAt) : undefined,
+	};
 }
 
 function pickCodexLimit(response: RateLimitResponse): RateLimitSnapshot {
@@ -125,82 +122,16 @@ function queryCodexRateLimits(): Promise<RateLimitSnapshot> {
 	});
 }
 
-function renderStatus(ctx: ExtensionContext, snapshot: RateLimitSnapshot): string {
-	const windows = [snapshot.primary, snapshot.secondary]
-		.filter((window): window is RateLimitWindow => Boolean(window))
-		.map(formatWindow);
-
-	const text = windows.length > 0 ? `Codex used ${windows.join(" ")}` : "Codex usage unavailable";
-	const used = Math.max(snapshot.primary?.usedPercent ?? 0, snapshot.secondary?.usedPercent ?? 0);
-	const color = used >= 75 ? "error" : "accent";
-	return ctx.ui.theme.fg(color, text);
-}
-
-function setUsageLine(ctx: ExtensionContext, text: string | undefined): void {
-	if (!ctx.hasUI) return;
-	ctx.ui.setStatus(STATUS_ID, text);
-}
-
-function isCodexSubscriptionSession(ctx: ExtensionContext): boolean {
-	const model = ctx.model;
-	return Boolean(model && model.provider === "openai-codex" && ctx.modelRegistry.isUsingOAuth(model));
-}
-
 export default function codexUsageExtension(pi: ExtensionAPI) {
-	let inFlight: Promise<void> | undefined;
-
-	async function refresh(ctx: ExtensionContext) {
-		if (!ctx.hasUI) return;
-		if (!isCodexSubscriptionSession(ctx)) {
-			setUsageLine(ctx, undefined);
-			return;
-		}
-		if (inFlight) return inFlight;
-
-		inFlight = (async () => {
-			try {
-				const snapshot = await queryCodexRateLimits();
-				if (isCodexSubscriptionSession(ctx)) {
-					setUsageLine(ctx, renderStatus(ctx, snapshot));
-				}
-			} catch {
-				if (isCodexSubscriptionSession(ctx)) {
-					setUsageLine(ctx, ctx.ui.theme.fg("warning", "Codex usage ?"));
-				}
-			} finally {
-				inFlight = undefined;
-			}
-		})();
-
-		return inFlight;
-	}
-
-	pi.on("session_start", async (_event, ctx) => {
-		if (isCodexSubscriptionSession(ctx)) {
-			setUsageLine(ctx, ctx.ui.theme.fg("accent", "Codex usage …"));
-		}
-		await refresh(ctx);
-	});
-
-	pi.on("model_select", async (_event, ctx) => {
-		if (isCodexSubscriptionSession(ctx)) {
-			setUsageLine(ctx, ctx.ui.theme.fg("accent", "Codex usage …"));
-		}
-		await refresh(ctx);
-	});
-
-	pi.on("turn_end", async (_event, ctx) => {
-		await refresh(ctx);
-	});
-
-	pi.on("session_shutdown", async (_event, ctx) => {
-		setUsageLine(ctx, undefined);
-	});
-
-	pi.registerCommand("codex-usage", {
-		description: "Refresh Codex 5h/7d used percentage at the bottom of the footer",
-		handler: async (_args, ctx) => {
-			await refresh(ctx);
+	registerUsageFooter(pi, {
+		statusId: "codex-usage",
+		name: "Codex",
+		provider: "openai-codex",
+		query: async () => {
+			const snapshot = await queryCodexRateLimits();
+			return [snapshot.primary, snapshot.secondary]
+				.filter((window): window is RateLimitWindow => Boolean(window))
+				.map(toUsageWindow);
 		},
 	});
 }

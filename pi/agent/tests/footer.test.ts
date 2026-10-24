@@ -78,3 +78,12 @@ test("footer removes cleared progress rows without duplicating statuses", () => 
   statuses.clear()
   assert.equal(view.render().length, 2)
 })
+
+test("footer renders Claude usage on its own line after Codex usage", () => {
+  const view = footer(new Map([
+    ["anthropic-usage", "Claude usage"],
+    ["background-tasks", "2 agents"],
+    ["codex-usage", "Codex usage"],
+  ]))
+  assert.deepEqual(view.render().slice(2), ["2 agents", "Codex usage", "Claude usage"])
+})
