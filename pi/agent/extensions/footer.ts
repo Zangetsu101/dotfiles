@@ -104,10 +104,16 @@ export default function (pi: ExtensionAPI) {
 				];
 				const extensionStatuses = footerData.getExtensionStatuses();
 				const statuses = [...extensionStatuses.entries()]
-					.filter(([key]) => key !== "codex-usage")
+					.filter(([key]) => key !== "codex-usage" && key !== "background-tasks-progress")
 					.sort(([a], [b]) => a.localeCompare(b))
 					.map(([, text]) => sanitizeStatus(text));
 				if (statuses.length) lines.push(truncateToWidth(statuses.join(" "), width, theme.fg("dim", "...")));
+				const progress = extensionStatuses.get("background-tasks-progress");
+				if (progress) {
+					for (const line of progress.split("\n")) {
+						lines.push(truncateToWidth(theme.fg("muted", sanitizeStatus(line)), width));
+					}
+				}
 				const codexUsage = extensionStatuses.get("codex-usage");
 				if (codexUsage) lines.push(truncateToWidth(sanitizeStatus(codexUsage), width, theme.fg("dim", "...")));
 				return lines;

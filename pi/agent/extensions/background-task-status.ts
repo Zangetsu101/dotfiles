@@ -1,5 +1,4 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
-import { truncateToWidth } from "@earendil-works/pi-tui"
 import { BackgroundTasks, type BackgroundTask } from "./lib/background-task.ts"
 import { familyForContext } from "./lib/background-family.ts"
 
@@ -11,24 +10,16 @@ const replaceControlCharacters = (text: string) => text.replace(/[\x00-\x1f\x7f-
 function updateUI(ctx: ExtensionContext, tasks: BackgroundTask[], nodeId: string) {
   ctx.ui.setStatus(STATUS_KEY, formatRunningTasks(tasks, nodeId))
   const agents = tasks.filter((task) => task.status === "running" && task.kind === "agent" && task.id !== nodeId)
-  if (agents.length < 2) {
-    ctx.ui.setWidget(STATUS_KEY, undefined)
-    return
-  }
-  ctx.ui.setWidget(STATUS_KEY, (_tui, theme) => ({
-    render(width) {
-      const now = Date.now()
-      return agents.map((task) => {
-        const report = task.progress?.latest
-        const age = Math.max(0, Math.floor((now - (report?.at ?? task.startedAt ?? now)) / 1000))
-        const detail = report
-          ? `${report.state} · ${replaceControlCharacters(report.activity)} · updated ${age}s ago`
-          : `running · awaiting progress · ${task.startedAt === undefined ? "age unknown" : `running ${age}s`}`
-        return truncateToWidth(theme.fg("muted", `${replaceControlCharacters(task.label)} · ${detail}`), width)
-      })
-    },
-    invalidate() {},
-  }), { placement: "aboveEditor" })
+  const now = Date.now()
+  const lines = agents.length < 2 ? [] : agents.map((task) => {
+    const report = task.progress?.latest
+    const age = Math.max(0, Math.floor((now - (report?.at ?? task.startedAt ?? now)) / 1000))
+    const detail = report
+      ? `${report.state} · ${replaceControlCharacters(report.activity)} · updated ${age}s ago`
+      : `running · no progress report yet · ${task.startedAt === undefined ? "age unknown" : `running ${age}s`}`
+    return `${replaceControlCharacters(task.label)} · ${detail}`
+  })
+  ctx.ui.setStatus(`${STATUS_KEY}-progress`, lines.length ? lines.join("\n") : undefined)
 }
 
 export function formatRunningTasks(tasks: BackgroundTask[], nodeId?: string, now = Date.now()): string | undefined {
@@ -65,7 +56,7 @@ export default function (pi: ExtensionAPI, options: { tasks?: BackgroundTasks } 
     ageTimer = undefined
     if (ctx.hasUI) {
       ctx.ui.setStatus(STATUS_KEY, undefined)
-      ctx.ui.setWidget(STATUS_KEY, undefined)
+      ctx.ui.setStatus(`${STATUS_KEY}-progress`, undefined)
     }
     if (shuttingDown || !ctx.hasUI) return
     const family = familyForContext(reason, ctx, pi.getSessionName?.())
@@ -104,7 +95,7 @@ export default function (pi: ExtensionAPI, options: { tasks?: BackgroundTasks } 
     stopMetadata = undefined
     if (ctx.hasUI) {
       ctx.ui.setStatus(STATUS_KEY, undefined)
-      ctx.ui.setWidget(STATUS_KEY, undefined)
+      ctx.ui.setStatus(`${STATUS_KEY}-progress`, undefined)
     }
   })
 }
