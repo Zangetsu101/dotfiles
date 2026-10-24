@@ -7,24 +7,28 @@ import { readAgentProgress } from "./lib/background-progress.ts"
 const STATUS_KEY = "background-tasks"
 const replaceControlCharacters = (text: string) => text.replace(/[\x00-\x1f\x7f-\x9f]/g, " ")
 
-function formatActivity(task: BackgroundTask): string {
+function formatActivity(task: BackgroundTask, now: number): string {
   const report = task.progress!.latest
   const characters = [...replaceControlCharacters(report.activity)]
   const activity = characters.length > 50 ? `${characters.slice(0, 49).join("")}…` : characters.join("")
-  return report.state === "working" ? activity : `${report.state} · ${activity}`
+  const detail = report.state === "working" ? activity : `${report.state} · ${activity}`
+  const age = Math.max(0, Math.floor((now - report.at) / 1000))
+  return `${detail} · updated ${age}s ago`
 }
 
 function updateUI(ctx: ExtensionContext, tasks: BackgroundTask[], nodeId: string) {
   ctx.ui.setStatus(STATUS_KEY, formatRunningTasks(tasks, nodeId))
   const agents = tasks.filter((task) => task.status === "running" && task.kind === "agent" && task.id !== nodeId)
+  const now = Date.now()
   const lines = agents.length < 2 ? [] : agents.map((task) => {
-    const detail = task.progress ? formatActivity(task) : "awaiting progress"
+    const age = task.startedAt === undefined ? "age unknown" : `running ${Math.max(0, Math.floor((now - task.startedAt) / 1000))}s`
+    const detail = task.progress ? formatActivity(task, now) : `awaiting progress · ${age}`
     return `${replaceControlCharacters(task.label)} · ${detail}`
   })
   ctx.ui.setStatus(`${STATUS_KEY}-progress`, lines.length ? lines.join("\n") : undefined)
 }
 
-export function formatRunningTasks(tasks: BackgroundTask[], nodeId?: string): string | undefined {
+export function formatRunningTasks(tasks: BackgroundTask[], nodeId?: string, now = Date.now()): string | undefined {
   const running = tasks.filter((task) => task.status === "running" && task.id !== nodeId)
   const reported = running.filter((task) => task.kind === "agent" && task.progress)
   if (!running.length && !reported.length) return undefined
@@ -34,7 +38,7 @@ export function formatRunningTasks(tasks: BackgroundTask[], nodeId?: string): st
     agents ? `${agents} agent${agents === 1 ? "" : "s"}` : "",
     monitors ? `${monitors} monitor${monitors === 1 ? "" : "s"}` : "",
   ].filter(Boolean)
-  const activities = (agents === 1 ? reported : []).map(formatActivity)
+  const activities = (agents === 1 ? reported : []).map((task) => formatActivity(task, now))
   return [...parts, ...activities].join(" · ")
 }
 
