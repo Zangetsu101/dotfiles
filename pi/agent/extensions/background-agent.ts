@@ -156,6 +156,10 @@ async function withMailboxLock<T>(statusFile: string, operation: () => Promise<T
 }
 
 async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: TmuxProcessAdapter, pollMs: number, now: () => number): Promise<void> {
+  const pane = process.env.TMUX_PANE
+  const setWindowOption = async (key: string, value: string) => {
+    if (pane) await tmux.run(["set-option", "-w", "-t", pane, key, value]).catch(() => undefined)
+  }
   pi.registerTool({
     name: "background_agent_report",
     label: "Report assignment progress",
@@ -231,8 +235,8 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
       rm(`${statusFile}.notified`, { force: true }),
       rm(`${statusFile}.progress`, { force: true }),
       rm(`${statusFile}.check-in`, { force: true }),
-      tmux.run(["set-option", "-w", "@pi_agent_status", "running"]).catch(() => undefined),
-      tmux.run(["set-option", "-w", "@pi_task_status", "running"]).catch(() => undefined),
+      setWindowOption("@pi_agent_status", "running"),
+      setWindowOption("@pi_task_status", "running"),
     ])
     reported = false
   })
@@ -271,11 +275,11 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
   })
 
   pi.on("model_select", async (event) => {
-    await tmux.run(["set-option", "@pi_agent_model", `${event.model.provider}/${event.model.id}`]).catch(() => undefined)
+    await setWindowOption("@pi_agent_model", `${event.model.provider}/${event.model.id}`)
   })
 
   pi.on("thinking_level_select", async (event) => {
-    await tmux.run(["set-option", "@pi_agent_thinking", event.level]).catch(() => undefined)
+    await setWindowOption("@pi_agent_thinking", event.level)
   })
 }
 

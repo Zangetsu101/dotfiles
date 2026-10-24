@@ -72,8 +72,9 @@ export class FakeTmuxProcessAdapter implements TmuxProcessAdapter {
       const session = this.session(option(args, "-t"))!; const id = `@${this.nextWindow++}`; const name = option(args, "-n") ?? id
       const window: Window = { id, sessionId: session.id, name, metadata: new Map(), panes: new Map(), command: args, interactiveAfterCompletion: args.join("\n").includes('exec "${SHELL:-/bin/bash}" -l') }
       session.windows.set(id, window)
+      const pane = this.createPane(window, args)
       if (option(args, "-F") === "#{pane_id}\t#{window_id}") {
-        return `${this.createPane(window, args)}\t${id}`
+        return `${pane}\t${id}`
       }
       return id
     }
@@ -84,8 +85,10 @@ export class FakeTmuxProcessAdapter implements TmuxProcessAdapter {
       return this.createPane(window, args)
     }
     if (action === "set-option") {
-      const target = option(args, "-t") ?? this.currentSession; const record = this.record(target); if (!record) return ""
-      const targetIndex = args.indexOf("-t"); const key = args[targetIndex + 2]!; const value = args[targetIndex + 3] ?? ""
+      const target = option(args, "-t") ?? this.currentSession
+      const record = args.includes("-w") ? this.window(this.pane(target)?.windowId ?? target) : this.record(target)
+      if (!record) return ""
+      const key = args.at(-2)!; const value = args.at(-1) ?? ""
       if (this.failSetupFor === key) throw new Error("injected setup failure")
       if (key === "remain-on-exit" && "retained" in record) record.retained = value === "on"; else record.metadata.set(key, value)
       return ""
