@@ -10,8 +10,9 @@ export type UsageWindow = {
 type UsageFooterOptions = {
 	statusId: string;
 	name: string;
-	provider: string;
-	query: (ctx: ExtensionContext, model: Model<any>) => Promise<UsageWindow[]>;
+	isSession: (ctx: ExtensionContext, model: Model<any>) => boolean;
+	/** Resolves to undefined when there is no new usage data, keeping the current line. */
+	query: (ctx: ExtensionContext, model: Model<any>) => Promise<UsageWindow[] | undefined>;
 };
 
 function formatResetTime(resetsAt: Date): string {
@@ -27,7 +28,7 @@ function formatWindow(window: UsageWindow): string {
 	return `${window.label}:${used}%${reset}`;
 }
 
-export function registerUsageFooter(pi: ExtensionAPI, { statusId, name, provider, query }: UsageFooterOptions) {
+export function registerUsageFooter(pi: ExtensionAPI, { statusId, name, isSession, query }: UsageFooterOptions) {
 	let inFlight: Promise<void> | undefined;
 
 	function setUsageLine(ctx: ExtensionContext, text: string | undefined): void {
@@ -37,7 +38,7 @@ export function registerUsageFooter(pi: ExtensionAPI, { statusId, name, provider
 
 	function subscriptionModel(ctx: ExtensionContext): Model<any> | undefined {
 		const model = ctx.model;
-		return model && model.provider === provider && ctx.modelRegistry.isUsingOAuth(model) ? model : undefined;
+		return model && isSession(ctx, model) ? model : undefined;
 	}
 
 	function renderStatus(ctx: ExtensionContext, windows: UsageWindow[]): string {
@@ -59,7 +60,7 @@ export function registerUsageFooter(pi: ExtensionAPI, { statusId, name, provider
 		inFlight = (async () => {
 			try {
 				const windows = await query(ctx, model);
-				if (subscriptionModel(ctx)) {
+				if (windows && subscriptionModel(ctx)) {
 					setUsageLine(ctx, renderStatus(ctx, windows));
 				}
 			} catch {

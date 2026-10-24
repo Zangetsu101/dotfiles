@@ -2,15 +2,15 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import anthropicUsageExtension from "../extensions/anthropic-usage.ts"
 
-async function startSession(fetchImpl: typeof fetch) {
+async function startSession(fetchImpl: typeof fetch, provider = "anthropic") {
   const handlers = new Map<string, (event: any, ctx: any) => Promise<void>>()
   const statuses = new Map<string, string>()
   const colors = new Map<string, string>()
   const ctx = {
     hasUI: true,
-    model: { provider: "anthropic" },
+    model: { provider },
     modelRegistry: {
-      isUsingOAuth: () => true,
+      isUsingOAuth: () => provider === "anthropic",
       getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "token" }),
     },
     ui: {
@@ -78,4 +78,26 @@ test("Anthropic usage shows the 5h reset time and turns red at 75%", async () =>
 test("Anthropic usage shows a warning when the request fails", async () => {
   const { statuses } = await startSession((async () => new Response("nope", { status: 401 })) as any)
   assert.equal(statuses.get("anthropic-usage"), "Claude usage ?")
+})
+
+test("Claude bridge usage comes from rate-limit headers without querying the API", async () => {
+  let fetched = false
+  const { ctx, handlers, statuses } = await startSession((async () => { fetched = true; return new Response("{}") }) as any, "claude-bridge")
+  assert.equal(statuses.get("anthropic-usage"), "Claude usage …")
+  await handlers.get("after_provider_response")!({ status: 200, headers: { "content-type": "text/event-stream" } }, ctx)
+  await handlers.get("turn_end")!({}, ctx)
+  assert.equal(statuses.get("anthropic-usage"), "Claude usage …")
+  await handlers.get("after_provider_response")!({
+    status: 200,
+    headers: {
+      "anthropic-ratelimit-unified-5h-utilization": "0.03",
+      "anthropic-ratelimit-unified-5h-reset": "1792853400",
+      "anthropic-ratelimit-unified-7d-utilization": "0.01",
+      "anthropic-ratelimit-unified-7d-reset": "1793185200",
+    },
+  }, ctx)
+  await handlers.get("turn_end")!({}, ctx)
+  const resetTime = new Date(1792853400 * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+  assert.equal(statuses.get("anthropic-usage"), `Claude used 5h:3% (resets ${resetTime}) 7d:1%`)
+  assert.equal(fetched, false)
 })

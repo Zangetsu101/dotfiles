@@ -12,6 +12,7 @@ type UsageResponse = {
 	seven_day?: AnthropicUsageWindow | null;
 };
 
+const RATE_LIMIT_HEADER_PREFIX = "anthropic-ratelimit-unified";
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const TIMEOUT_MS = 8000;
 
@@ -41,11 +42,37 @@ async function queryAnthropicUsage(ctx: ExtensionContext, model: Model<any>): Pr
 	return windows;
 }
 
+function headerWindow(headers: Record<string, string>, label: string, showReset: boolean): UsageWindow | undefined {
+	const utilization = headers[`${RATE_LIMIT_HEADER_PREFIX}-${label}-utilization`];
+	if (utilization === undefined) return undefined;
+	const reset = headers[`${RATE_LIMIT_HEADER_PREFIX}-${label}-reset`];
+	return {
+		label,
+		usedPercent: Number(utilization) * 100,
+		resetsAt: showReset && reset ? new Date(Number(reset) * 1000) : undefined,
+	};
+}
+
+/** Claude bridge sessions report usage as unified rate-limit headers rebuilt from Claude Code's rate_limit_event. */
+function usageFromRateLimitHeaders(headers: Record<string, string>): UsageWindow[] | undefined {
+	const windows = [headerWindow(headers, "5h", true), headerWindow(headers, "7d", false)].filter(
+		(window): window is UsageWindow => Boolean(window),
+	);
+	return windows.length > 0 ? windows : undefined;
+}
+
 export default function anthropicUsageExtension(pi: ExtensionAPI) {
+	let bridgeUsage: UsageWindow[] | undefined;
+
+	pi.on("after_provider_response", (event) => {
+		bridgeUsage = usageFromRateLimitHeaders(event.headers) ?? bridgeUsage;
+	});
+
 	registerUsageFooter(pi, {
 		statusId: "anthropic-usage",
 		name: "Claude",
-		provider: "anthropic",
-		query: queryAnthropicUsage,
+		isSession: (ctx, model) =>
+			model.provider === "claude-bridge" || (model.provider === "anthropic" && ctx.modelRegistry.isUsingOAuth(model)),
+		query: async (ctx, model) => (model.provider === "claude-bridge" ? bridgeUsage : queryAnthropicUsage(ctx, model)),
 	});
 }

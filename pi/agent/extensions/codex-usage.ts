@@ -126,7 +126,7 @@ export default function codexUsageExtension(pi: ExtensionAPI) {
 	registerUsageFooter(pi, {
 		statusId: "codex-usage",
 		name: "Codex",
-		provider: "openai-codex",
+		isSession: (ctx, model) => model.provider === "openai-codex" && ctx.modelRegistry.isUsingOAuth(model),
 		query: async () => {
 			const snapshot = await queryCodexRateLimits();
 			return [snapshot.primary, snapshot.secondary]
