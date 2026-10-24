@@ -120,7 +120,7 @@ test("multiple agents publish newline progress status and clear them on transiti
   const second = { ...task("agent", "running"), id: "second", label: "Docs", startedAt: Date.now() - 10000 }
   notify([working, second, task("monitor", "running")])
   assert.equal(status, "2 agents · 1 monitor")
-  assert.equal(progress, "Tests wide · blocked · Waiting for token · updated 5s ago\nDocs · running · no progress report yet · running 10s")
+  assert.equal(progress, "Tests wide · blocked · Waiting for token · updated 5s ago\nDocs · running · awaiting progress · running 10s")
   notify([working, task("monitor", "running")])
   assert.equal(progress, undefined)
   notify([working, second])
@@ -170,7 +170,7 @@ test("progress status reads progress files and excludes the caller and finished 
   await ready
   assert.equal(lines.length, 2)
   assert.match(lines[0], /^Tests · working · Checking 界 tests · updated 0s ago$/)
-  assert.equal(lines[1], "Docs · running · no progress report yet · age unknown")
+  assert.equal(lines[1], "Docs · running · awaiting progress · age unknown")
 })
 
 test("multiple agents keep activities out of the count summary", () => {

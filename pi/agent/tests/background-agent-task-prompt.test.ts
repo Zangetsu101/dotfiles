@@ -19,6 +19,16 @@ test("delegation guidelines define yielding, automatic resumption, and inspectio
   assert.match(yielding, /Inspect tasks only.*check-in.*concrete failure/)
 })
 
+test("child progress guidelines require the reporting tool at the start and activity changes", async () => {
+  process.env.PI_BACKGROUND_AGENT_STATUS_FILE = "/tmp/progress-guidelines-test"
+  const runtime = new FakePiRuntime()
+  await backgroundAgentExtension(runtime.pi)
+  const guidelines = runtime.tools.get("background_agent_report").promptGuidelines.join("\n")
+  assert.match(guidelines, /Call background_agent_report before starting/)
+  assert.match(guidelines, /Call it again when your activity changes/)
+  assert.match(guidelines, /state.*blocked/)
+})
+
 for (const maxDepth of [1, 3]) test(`background agents respect a configured maximum depth of ${maxDepth}`, async () => {
   const previousAgentStatus = process.env.PI_BACKGROUND_AGENT_STATUS_FILE
   const previousDepth = process.env.PI_BACKGROUND_AGENT_DEPTH

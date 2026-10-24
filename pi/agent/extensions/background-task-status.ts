@@ -16,7 +16,7 @@ function updateUI(ctx: ExtensionContext, tasks: BackgroundTask[], nodeId: string
     const age = Math.max(0, Math.floor((now - (report?.at ?? task.startedAt ?? now)) / 1000))
     const detail = report
       ? `${report.state} · ${replaceControlCharacters(report.activity)} · updated ${age}s ago`
-      : `running · no progress report yet · ${task.startedAt === undefined ? "age unknown" : `running ${age}s`}`
+      : `running · awaiting progress · ${task.startedAt === undefined ? "age unknown" : `running ${age}s`}`
     return `${replaceControlCharacters(task.label)} · ${detail}`
   })
   ctx.ui.setStatus(`${STATUS_KEY}-progress`, lines.length ? lines.join("\n") : undefined)
