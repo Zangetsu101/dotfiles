@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+
+if git diff --cached --quiet -- pi/agent/; then
+  exit 0
+fi
+
+if ! git diff --quiet -- pi/agent/ ||
+   [ -n "$(git ls-files --others --exclude-standard -- pi/agent/)" ]; then
+  echo "Stage or stash all changes under pi/agent/ before committing so checks validate the staged code." >&2
+  exit 1
+fi
+
+npm --prefix pi/agent run check

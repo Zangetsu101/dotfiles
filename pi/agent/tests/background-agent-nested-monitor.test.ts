@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { EventEmitter } from "node:events"
-import { access, mkdtemp, readFile, rm } from "node:fs/promises"
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -17,6 +17,10 @@ const execFileAsync = promisify(execFile)
 test("a child agent waits for nested background monitors before reporting completion", { timeout: 10_000 }, async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "pi-background-agent-test-"))
   const statusFile = join(directory, "completion.json")
+  const fastGate = join(directory, "fast-gate")
+  const slowGate = join(directory, "slow-gate")
+  const gatedCommand = (gate: string, output: string) =>
+    `read -r release < '${gate.replaceAll("'", "'\\''")}' && printf ${output}`
   const socket = `pi-nested-monitor-test-${process.pid}-${Date.now()}`
   const tmux: TmuxProcessAdapter = {
     async run(args) {
@@ -93,6 +97,8 @@ test("a child agent waits for nested background monitors before reporting comple
   }
 
   try {
+    // Each monitor stays alive until its preceding negative assertion has run.
+    await execFileAsync("mkfifo", [fastGate, slowGate])
     await backgroundAgentExtension(pi, { tasks, tmux })
     backgroundMonitorExtension(pi, { tasks })
 
@@ -101,7 +107,7 @@ test("a child agent waits for nested background monitors before reporting comple
 
     const fastTask = await monitor.execute(
       "fast-monitor-call",
-      { command: "sleep 0.1; printf fast-finished", label: "fast nested research", expectedRunningMinutes: 1 },
+      { command: gatedCommand(fastGate, "fast-finished"), label: "fast nested research", expectedRunningMinutes: 1 },
       undefined,
       undefined,
       ctx,
@@ -109,7 +115,7 @@ test("a child agent waits for nested background monitors before reporting comple
     assert.ok(fastTask.details.target)
     const slowTask = await monitor.execute(
       "slow-monitor-call",
-      { command: "sleep 0.4; printf slow-finished", label: "slow nested research", expectedRunningMinutes: 1 },
+      { command: gatedCommand(slowGate, "slow-finished"), label: "slow nested research", expectedRunningMinutes: 1 },
       undefined,
       undefined,
       ctx,
@@ -119,11 +125,13 @@ test("a child agent waits for nested background monitors before reporting comple
     await emit("agent_settled")
     await assert.rejects(access(statusFile), { code: "ENOENT" })
 
+    await writeFile(fastGate, "release\n")
     await waitForMessage("fast nested research")
     finalOutput = "One nested monitor is still running."
     await emit("agent_settled")
     await assert.rejects(access(statusFile), { code: "ENOENT" })
 
+    await writeFile(slowGate, "release\n")
     await waitForMessage("slow nested research")
     finalOutput = "Research report written."
     await emit("agent_settled")

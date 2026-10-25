@@ -63,7 +63,13 @@ ln -s ~/.dotfiles/claude/* ~/.claude/
 ln -s ~/.dotfiles/agents ~/.agents
 ln -s ~/.dotfiles/agents/skills ~/.claude/skills
 npm --prefix ~/.dotfiles/pi/agent install
+git -C ~/.dotfiles config core.hooksPath .githooks
 ```
+
+The pre-commit hook runs Pi tests, type checking, and dependency validation when
+`pi/agent/` has staged changes. Stage or stash all changes in that directory first;
+the hook rejects unstaged and untracked Pi files so it checks the staged code.
+Git's `--no-verify` option bypasses the hook.
 
 Put machine- or employer-specific Bash settings in `bash/bashrc.local`;
 the shared Bash configuration loads this gitignored file when present.
