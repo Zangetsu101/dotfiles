@@ -1,4 +1,6 @@
 {
+  "tui.editor.historyPrevious": ["ctrl+p"],
+  "tui.editor.historyNext": ["ctrl+n"],
   "tui.select.up": ["up", "ctrl+p"],
   "tui.select.down": ["down", "ctrl+n"],
   "tui.select.pageUp": ["pageUp", "ctrl+u"],
@@ -6,6 +8,8 @@
   "tui.select.confirm": ["enter"],
   "tui.select.cancel": ["escape", "ctrl+c"],
   "app.clipboard.pasteImage": ["ctrl+v", "alt+v"],
+  "app.session.togglePath": ["alt+p"],
+  "app.session.toggleNamedFilter": ["alt+n"],
   "app.model.cycleForward": ["alt+n"],
   "app.model.cycleBackward": ["alt+p"]
 }
