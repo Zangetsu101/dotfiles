@@ -12,8 +12,8 @@ function formatActivity(task: BackgroundTask, now: number): string {
   const characters = [...replaceControlCharacters(report.activity)]
   const activity = characters.length > 50 ? `${characters.slice(0, 49).join("")}…` : characters.join("")
   const detail = report.state === "working" ? activity : `${report.state} · ${activity}`
-  const age = Math.max(0, Math.floor((now - report.at) / 1000))
-  return `${detail} · updated ${age}s ago`
+  const minutes = Math.max(0, Math.floor((now - report.at) / 60000))
+  return `${detail} · updated ${minutes === 0 ? "<1m" : `${minutes}m`} ago`
 }
 
 function updateUI(ctx: ExtensionContext, tasks: BackgroundTask[], nodeId: string) {
@@ -72,7 +72,7 @@ export default function (pi: ExtensionAPI, options: { tasks?: BackgroundTasks } 
         if (!shuttingDown && restoring === generation && snapshot === visibleTasks) updateUI(ctx, enriched, family.nodeId)
       } finally { updating = false }
     }
-    ageTimer = setInterval(() => { void updateProgress().catch((error) => console.error("background task progress:", error)) }, 1000)
+    ageTimer = setInterval(() => { void updateProgress().catch((error) => console.error("background task progress:", error)) }, 5000)
     const stop = await tasks.watchMetadata({ subtreeRootId: family.nodeId }, (visible) => {
       if (!shuttingDown && restoring === generation) {
         visibleTasks = visible
