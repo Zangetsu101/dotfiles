@@ -7,6 +7,15 @@ if git diff --cached --quiet -- pi/agent/; then
   exit 0
 fi
 
+# Lowercase tags indicate assume-unchanged; S/s indicate skip-worktree.
+# Neither flag is safe when checks run against the working tree.
+hidden_files=$(git ls-files -v -- pi/agent/ | LC_ALL=C grep '^[a-zS] ' || :)
+if [ -n "$hidden_files" ]; then
+  echo "Clear assume-unchanged and skip-worktree flags under pi/agent/ before committing so checks validate the staged code:" >&2
+  printf '%s\n' "$hidden_files" >&2
+  exit 1
+fi
+
 if ! git diff --quiet -- pi/agent/ ||
    [ -n "$(git ls-files --others --exclude-standard -- pi/agent/)" ]; then
   echo "Stage or stash all changes under pi/agent/ before committing so checks validate the staged code." >&2

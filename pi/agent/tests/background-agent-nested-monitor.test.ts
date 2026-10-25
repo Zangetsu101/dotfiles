@@ -20,7 +20,7 @@ test("a child agent waits for nested background monitors before reporting comple
   const fastGate = join(directory, "fast-gate")
   const slowGate = join(directory, "slow-gate")
   const gatedCommand = (gate: string, output: string) =>
-    `read -r release < '${gate.replaceAll("'", "'\\''")}' && printf ${output}`
+    `while [ ! -f '${gate.replaceAll("'", "'\\''")}' ]; do sleep 0.02; done; printf ${output}`
   const socket = `pi-nested-monitor-test-${process.pid}-${Date.now()}`
   const tmux: TmuxProcessAdapter = {
     async run(args) {
@@ -97,8 +97,6 @@ test("a child agent waits for nested background monitors before reporting comple
   }
 
   try {
-    // Each monitor stays alive until its preceding negative assertion has run.
-    await execFileAsync("mkfifo", [fastGate, slowGate])
     await backgroundAgentExtension(pi, { tasks, tmux })
     backgroundMonitorExtension(pi, { tasks })
 
