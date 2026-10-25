@@ -34,7 +34,7 @@ test("statusline follows authoritative metadata and releases its subscription on
   t.after(() => handlers.get("session_shutdown")!({}, ctx))
   await handlers.get("session_start")!({ reason: "startup" }, ctx)
   notify!([task("agent", "running"), task("monitor", "running")])
-  assert.equal(statuses.at(-1), "1 agent · 1 monitor")
+  assert.equal(statuses.at(-1), "1 agent · 1 monitor · agent · awaiting progress")
   notify!([task("agent", "succeeded")])
   assert.equal(statuses.at(-1), undefined)
   await handlers.get("session_shutdown")!({}, ctx)
@@ -80,6 +80,12 @@ test("pending status subscriptions cannot update UI or survive shutdown or a new
     await handlers.get("session_shutdown")!({}, ctx)
     assert.equal(listeners.size, 0)
   }
+})
+
+test("single agent without a report shows its label and awaits progress", () => {
+  const agent = { ...task("agent", "running"), label: "Integrate\nStryker" }
+  assert.equal(formatRunningTasks([agent]), "1 agent · Integrate Stryker · awaiting progress")
+  assert.equal(formatRunningTasks([agent, task("monitor", "running")]), "1 agent · 1 monitor · Integrate Stryker · awaiting progress")
 })
 
 test("progress age uses whole minutes and clamps future timestamps", () => {

@@ -38,7 +38,9 @@ export function formatRunningTasks(tasks: BackgroundTask[], nodeId?: string, now
     agents ? `${agents} agent${agents === 1 ? "" : "s"}` : "",
     monitors ? `${monitors} monitor${monitors === 1 ? "" : "s"}` : "",
   ].filter(Boolean)
-  const activities = (agents === 1 ? reported : []).map((task) => formatActivity(task, now))
+  const activities = (agents === 1 ? running.filter((task) => task.kind === "agent") : []).map((task) =>
+    task.progress ? formatActivity(task, now) : `${replaceControlCharacters(task.label)} · awaiting progress`,
+  )
   return [...parts, ...activities].join(" · ")
 }
 
