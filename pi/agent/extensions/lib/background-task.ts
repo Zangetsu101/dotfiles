@@ -133,6 +133,7 @@ const keys = ["kind", "id", "label", "display_name", "status", "started_at", "pa
 export class BackgroundTasks {
   private readonly tmux: TmuxProcessAdapter
   private readonly known = new Map<string, BackgroundTask>()
+  private readonly retained = new Set<string>()
   private readonly sessions = new Map<string, string>()
   private readonly pools = new Map<string, Array<{ window: string; count: number }>>()
   private readonly metadataDirectory: string
@@ -154,8 +155,9 @@ export class BackgroundTasks {
     return watcher.watch(query, listener)
   }
 
-  remember(task: BackgroundTask): void {
+  remember(task: BackgroundTask, options: { retain?: boolean } = {}): void {
     this.known.set(task.id, task)
+    if (options.retain) this.retained.add(task.id)
   }
 
   private async withFamilyLock<T>(familyId: string, operation: () => Promise<T>): Promise<T> {
@@ -445,7 +447,10 @@ export class BackgroundTasks {
     }
     const discovered = [...windows.split("\n"), ...panes.split("\n")].filter(Boolean).map(parse)
       .filter((task): task is BackgroundTask => task !== undefined && (task.kind === "agent" ? task.target.startsWith("@") : task.target.startsWith("%")))
-    for (const task of discovered) this.known.set(task.id, task)
+    for (const task of discovered) {
+      this.known.set(task.id, task)
+      this.retained.delete(task.id)
+    }
     const poolCounts = new Map<string, Map<string, number>>()
     for (const task of discovered) {
       if (task.kind !== "monitor" || !task.familyId || !task.poolWindow) continue
@@ -457,7 +462,8 @@ export class BackgroundTasks {
     for (const [familyId, familyPools] of poolCounts) {
       this.pools.set(familyId, [...familyPools].map(([window, count]) => ({ window, count })))
     }
-    const all = liveOnly ? discovered : discovered.length ? discovered : [...this.known.values()]
+    const retained = [...this.known.values()].filter((task) => this.retained.has(task.id))
+    const all = liveOnly ? discovered : discovered.length ? [...discovered, ...retained] : [...this.known.values()]
     if (!query) return all
     if ("familyId" in query) return all.filter((task) => task.familyId === query.familyId)
     return this.subtree({ id: query.subtreeRootId }, all)
@@ -526,8 +532,9 @@ export class BackgroundTasks {
 
       for (const task of branch.reverse()) {
         try {
-          await this.tmux.run([task.kind === "monitor" ? "kill-pane" : "kill-window", "-t", task.target])
+          if (!this.retained.has(task.id) || await this.isPresent(task)) await this.tmux.run([task.kind === "monitor" ? "kill-pane" : "kill-window", "-t", task.target])
           this.known.delete(task.id)
+          this.retained.delete(task.id)
           await this.invalidateMetadata()
           if (task.kind === "monitor" && task.familyId) await this.releasePool(task, task.familyId)
           removed++

@@ -91,6 +91,7 @@ function runtime(shared: SharedTasks, confirmations: boolean[] = [], subtreeRoot
   events.on(BACKGROUND_ACTIVITY_FINISHED, (item) => activity.finished.push(item.id))
   const commands = new Map<string, any>()
   const pi = {
+    getActiveTools: () => [], setActiveTools() {},
     events,
     on(name: string, handler: Handler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]) },
     registerMessageRenderer() {}, registerTool() {}, registerCommand(name: string, command: any) { commands.set(name, command) },

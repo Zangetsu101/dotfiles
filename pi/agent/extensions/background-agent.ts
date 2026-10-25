@@ -19,6 +19,7 @@ import {
   systemTmux,
   writeTaskCompletion,
   taskCompletionStatus,
+  type BackgroundTask,
   type TaskStatus,
   type TmuxProcessAdapter,
 } from "./lib/background-task.ts"
@@ -29,6 +30,7 @@ import { backgroundAttachCommand } from "./lib/background-attach.ts"
 import { backgroundToolRenderers, registerBackgroundMessages } from "./lib/background-rendering.ts"
 
 import { reportAgentProgress, readAgentProgress, describeAgentProgress } from "./lib/background-progress.ts"
+import { canMessageBackgroundAgent, setBackgroundToolActive } from "./lib/background-tool-availability.ts"
 
 const execFileAsync = promisify(execFile)
 const STATUS_FILE_ENV = "PI_BACKGROUND_AGENT_STATUS_FILE"
@@ -298,7 +300,6 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   const configuredMaxDepth = Number.parseInt(process.env[MAX_DEPTH_ENV] ?? "", 10)
   const maxDepth = Number.isFinite(configuredMaxDepth) ? configuredMaxDepth : DEFAULT_MAX_AGENT_DEPTH
   if (childStatusFile) await registerChildBridge(pi, childStatusFile, tmux, pollMs, now)
-  if (depth >= maxDepth) return
 
   const watchers = new Map<string, FSWatcher>()
   const reconciliationTimers = new Map<string, NodeJS.Timeout>()
@@ -306,9 +307,66 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   let family: TaskFamily | undefined
   let shuttingDown = false
 
+  const availabilityWatchers = new Map<string, FSWatcher>()
+  const stopAvailabilityWatchers = () => {
+    for (const watcher of availabilityWatchers.values()) watcher.close()
+    availabilityWatchers.clear()
+  }
+  let stopMetadata: (() => void) | undefined
+  let generation = 0
+  let availabilityRevision = 0
+  const updateAvailability = async (visible: BackgroundTask[], revision = ++availabilityRevision) => {
+    if (shuttingDown || revision !== availabilityRevision) return
+    const descendants = visible.filter((task) => task.kind === "agent" && task.id !== family?.nodeId)
+    const ids = new Set(descendants.map((agent) => agent.id))
+    for (const [id, watcher] of availabilityWatchers) {
+      if (!ids.has(id)) { watcher.close(); availabilityWatchers.delete(id) }
+    }
+    for (const agent of descendants) {
+      if (availabilityWatchers.has(agent.id)) continue
+      try {
+        const watcher = watch(dirname(agent.statusFile), (_event, filename) => {
+          if (!filename || filename.toString() === basename(agent.statusFile)) refreshAvailability()
+        })
+        availabilityWatchers.set(agent.id, watcher)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+      }
+    }
+    const messageable = await Promise.all(descendants.map((agent) => canMessageBackgroundAgent(tasks, agent)))
+    if (shuttingDown || revision !== availabilityRevision) return
+    setBackgroundToolActive(pi, "background_agent_message", messageable.some(Boolean))
+  }
+  const refreshAvailability = () => {
+    if (!family || shuttingDown) return
+    const current = generation
+    const revision = ++availabilityRevision
+    void tasks.list({ subtreeRootId: family.nodeId }).then((visible) => {
+      if (current === generation && !shuttingDown) return updateAvailability(visible, revision)
+    }).catch((error) => console.error("background agent availability:", error))
+  }
+  for (const event of [BACKGROUND_TASK_CREATED, BACKGROUND_TASK_REMOVED, BACKGROUND_TASK_STATUS_CHANGED]) pi.events.on(event, refreshAvailability)
+
   const restoreFamily = async (reason: string, ctx: ExtensionContext) => {
+    const restoring = ++generation
+    const revision = ++availabilityRevision
+    stopAvailabilityWatchers()
+    stopMetadata?.()
+    stopMetadata = undefined
     family = familyForContext(reason, ctx, pi.getSessionName?.())
-    agentsCache = (await listAgents(tasks, tmux, family.nodeId)).filter((agent) => agent.parentId === family!.nodeId)
+    const visible = await listAgents(tasks, tmux, family.nodeId)
+    if (shuttingDown || restoring !== generation) return false
+    agentsCache = visible.filter((agent) => agent.parentId === family!.nodeId)
+    await updateAvailability(visible, revision)
+    if (shuttingDown || restoring !== generation) return false
+    let pendingAvailability = Promise.resolve()
+    const stop = await tasks.watchMetadata({ subtreeRootId: family.nodeId }, (snapshot) => {
+      if (restoring === generation && !shuttingDown) pendingAvailability = updateAvailability(snapshot).catch((error) => console.error("background agent availability:", error))
+    })
+    await pendingAvailability
+    if (shuttingDown || restoring !== generation) { stop(); return false }
+    stopMetadata = stop
+    return true
   }
 
   const stopMonitoring = (id: string) => {
@@ -462,12 +520,12 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   }
 
   pi.on("session_start", async (event, ctx) => {
-    await restoreFamily(event.reason, ctx)
+    if (!await restoreFamily(event.reason, ctx)) return
     for (const agent of agentsCache) if (agent.statusFile) monitor(agent)
   })
   pi.on("session_tree", async (_event, ctx) => {
     stopAllMonitoring()
-    await restoreFamily("tree", ctx)
+    if (!await restoreFamily("tree", ctx)) return
     for (const agent of agentsCache) if (agent.statusFile) monitor(agent)
   })
 
@@ -483,12 +541,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       const metadata = agent ? { id: agent.id, label: agent.label, target: agent.target, attach: backgroundAttachCommand(agent) } : {}
       if (!params.message.trim()) return { content: [{ type: "text" as const, text: "Message must not be empty" }], details: { ...metadata, status: "error" } }
       if (!agent) return { content: [{ type: "text" as const, text: "Agent not found in this task subtree. Check the agent ID from the background_agent result." }], details: { status: "not_found" } }
-      const canReceive = async () => {
-        const completion = await tasks.completion(agent)
-        return completion && "kind" in completion && completion.kind !== "exit"
-          ? await tasks.isPresent(agent)
-          : !completion && agent.status !== "terminated" && agent.status !== "interrupted" && await tasks.isPresent(agent)
-      }
+      const canReceive = () => canMessageBackgroundAgent(tasks, agent)
       if (!await canReceive()) return { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { ...metadata, status: "not_running" } }
       const mailbox = `${agent.statusFile}.messages`
       const id = randomUUID()
@@ -535,7 +588,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     },
   })
 
-  pi.registerTool({
+  if (depth < maxDepth) pi.registerTool({
     name: "background_agent",
     ...backgroundToolRenderers("background_agent"),
     label: "Background agent",
@@ -584,6 +637,8 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       pi.events.emit(BACKGROUND_TASK_CREATED, task)
       await checkIns.schedule(statusFile, expectedCompletionAt)
       monitor(agent)
+      const revision = ++availabilityRevision
+      await updateAvailability(await tasks.list({ subtreeRootId: family!.nodeId }), revision)
 
       return {
         content: [
@@ -599,6 +654,11 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
 
   pi.on("session_shutdown", () => {
     shuttingDown = true
+    ++generation
+    ++availabilityRevision
+    stopAvailabilityWatchers()
+    stopMetadata?.()
+    stopMetadata = undefined
     stopAllMonitoring()
   })
 }

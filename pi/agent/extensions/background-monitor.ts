@@ -8,6 +8,7 @@ import { taskCheckIns } from "./lib/task-check-in.ts"
 import { notifyRunningTask, readOutputTail } from "./lib/background-task-check-in.ts"
 import { backgroundAttachCommand } from "./lib/background-attach.ts"
 import { backgroundToolRenderers, registerBackgroundMessages } from "./lib/background-rendering.ts"
+import { setBackgroundToolActive } from "./lib/background-tool-availability.ts"
 
 const MAX_OUTPUT_CHARS = 50_000
 const POLL_MS = 100
@@ -116,10 +117,12 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     }
     for (const task of restored.values()) tasks.remember?.(task)
 
+    let missingFamily = false
     if (family.isRoot) {
       pi.appendEntry?.(FAMILY_ENTRY, { familyId: family.familyId, rootId: family.rootId })
       const exists = await tasks.familyExists?.(family.familyId)
       if (!active()) return false
+      missingFamily = !exists
       if (exists) await tasks.reconcileFamily?.(family)
       else for (const task of restored.values()) {
         if (task.status !== "running") continue
@@ -129,12 +132,20 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       }
     }
     if (!active()) return false
+    if (missingFamily) for (const task of restored.values()) tasks.remember?.(task, { retain: true })
     const subtreeRootId = scope()
     const visible = await tasks.list({ subtreeRootId })
     if (!active()) return false
     taskCache = visible
+    setBackgroundToolActive(pi, "background_task", visible.some((task) => task.id !== family!.nodeId))
     const stop = await tasks.watchMetadata({ subtreeRootId }, (visible) => {
-      if (active()) taskCache = visible
+      if (active()) {
+        const retained = missingFamily
+          ? [...restored.values()].filter((task) => !removedTasks.has(task.id) && !visible.some((live) => live.id === task.id))
+          : []
+        taskCache = [...visible, ...retained]
+        setBackgroundToolActive(pi, "background_task", taskCache.some((task) => task.id !== family!.nodeId))
+      }
     })
     if (!active()) {
       stop()
@@ -199,6 +210,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     const created = task as BackgroundTask
     if (created.familyId === family?.familyId) pi.appendEntry?.(TASK_ENTRY, created)
     if ((configuredSubtreeRootId ? created.parentId === configuredSubtreeRootId : created.familyId === family?.familyId && created.parentId === family?.nodeId) && !taskCache.some((item) => item.id === created.id)) taskCache.push(created)
+    setBackgroundToolActive(pi, "background_task", taskCache.some((task) => task.id !== family?.nodeId))
   })
 
   pi.events.on(BACKGROUND_TASK_STATUS_CHANGED, (task) => {
@@ -329,6 +341,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       }
     }
     taskCache = taskCache.filter((task) => remaining.has(task.id))
+    setBackgroundToolActive(pi, "background_task", taskCache.some((task) => task.id !== family?.nodeId))
     return removed
   }
 

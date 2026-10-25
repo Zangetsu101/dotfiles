@@ -28,6 +28,7 @@ for (const outcome of ["settled", "exit"] as const) test(outcome === "settled"
   let claimed = false
   const completion = { kind: outcome, output: "done", exitCode: outcome === "exit" ? 1 : 0 }
   const tasks = {
+    watchMetadata: async () => () => {},
     list: async () => [{ ...agent, status: completed ? (outcome === "exit" ? "failed" : "succeeded") : "running" }],
     claimCompletionOrReconcile: async () => { claims++; if (!completed || claimed) return undefined; claimed = true; return completion },
     completion: async () => completed ? completion : undefined,
@@ -39,6 +40,7 @@ for (const outcome of ["settled", "exit"] as const) test(outcome === "settled"
   const messages: unknown[] = []
   const pi = {
     events: new EventEmitter(),
+    getActiveTools: () => [], setActiveTools() {},
     on(name: string, handler: (event: any, ctx: any) => Promise<void> | void) {
       handlers.set(name, [...(handlers.get(name) ?? []), handler])
     },

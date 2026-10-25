@@ -37,6 +37,9 @@ for (const transientError of [false, true]) test(`rapid follow-up completion is 
     const spawned = await parent.execute("background_agent", { task: "First task", expectedCompletionMinutes: 1 })
     process.env.PI_BACKGROUND_AGENT_STATUS_FILE = spawned.details.statusFile
     process.env.PI_BACKGROUND_AGENT_DEPTH = "3"
+    process.env.PI_BACKGROUND_TASK_FAMILY_ID = "family:conversation"
+    process.env.PI_BACKGROUND_TASK_ROOT_ID = "root:conversation"
+    process.env.PI_BACKGROUND_TASK_ID = spawned.details.id
     await backgroundAgent(child.pi, { tmux, pollMs: 5 })
     await child.emit("session_start")
     if (transientError) {

@@ -28,6 +28,9 @@ for (const runtimeFailure of ["exit", "disappeared"] as const) test(`reported co
     const spawned = await parent.execute("background_agent", { task: "Fix tests", expectedCompletionMinutes: 1 })
     process.env.PI_BACKGROUND_AGENT_STATUS_FILE = spawned.details.statusFile
     process.env.PI_BACKGROUND_AGENT_DEPTH = "3"
+    process.env.PI_BACKGROUND_TASK_FAMILY_ID = "family:conversation"
+    process.env.PI_BACKGROUND_TASK_ROOT_ID = "root:conversation"
+    process.env.PI_BACKGROUND_TASK_ID = spawned.details.id
     await backgroundAgent(child.pi, { tmux, pollMs: 10 })
     await child.emit("session_start")
     await child.execute("background_agent_report", { state: "completed", activity: "Fixed tests; manual UI check remains" })

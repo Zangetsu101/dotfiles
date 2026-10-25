@@ -57,6 +57,7 @@ test("a child agent waits for nested background monitors before reporting comple
   }
 
   const pi = {
+    getActiveTools: () => [], setActiveTools() {},
     events: eventBus,
     on(name: string, handler: Handler) {
       const registered = handlers.get(name) ?? []
