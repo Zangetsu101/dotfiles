@@ -38,7 +38,7 @@ async function fixture() {
     pending.delete(id)
     return timer.callback()
   })
-  return { statusFile, options, tick, queued }
+  return { statusFile, options, tick, queued, advance: (time: number) => { now = time } }
 }
 
 test("restores a deadline after reload and claims it only once", async () => {
@@ -366,7 +366,7 @@ test("an unreadable completion marker is reported rather than notifying", async 
   scheduler.stop(statusFile)
 })
 
-test("a callback failure is reported without redelivery and rearming still works", async (context) => {
+test("a transient callback rejection retries after one second and claims success across reload", async (context) => {
   const errors = context.mock.method(console, "error", () => {})
   const { statusFile, options, tick } = await fixture()
   const scheduler = createTaskCheckInScheduler(options)
@@ -380,11 +380,251 @@ test("a callback failure is reported without redelivery and rearming still works
   assert.equal(errors.mock.callCount(), 1)
   assert.deepEqual(errors.mock.calls[0]!.arguments, ["background task check-in failed:", failure])
   await tick(1120)
-  assert.equal(calls, 1)
-  await scheduler.schedule(statusFile, 1200)
-  await tick(1200)
   assert.equal(calls, 2)
   scheduler.stop(statusFile)
+  const resumed = createTaskCheckInScheduler(options)
+  await resumed.watch(statusFile, () => { calls++ })
+  await tick(1200)
+  assert.equal(calls, 2)
+  resumed.stop(statusFile)
+})
+
+test("live retry uses the persisted rejection deadline even when bookkeeping takes time", async (context) => {
+  context.mock.method(console, "error", () => {})
+  const { statusFile, options, tick, advance } = await fixture()
+  let rejected = false
+  const scheduler = createTaskCheckInScheduler({
+    ...options,
+    now() {
+      const time = options.now()
+      if (rejected) {
+        rejected = false
+        advance(620)
+      }
+      return time
+    },
+  })
+  let calls = 0
+  await scheduler.watch(statusFile, () => {
+    if (++calls === 1) {
+      rejected = true
+      throw new Error("offline")
+    }
+  })
+  await scheduler.schedule(statusFile, 120)
+  await tick(120)
+  await tick(1119)
+  assert.equal(calls, 1)
+  await tick(1120)
+  assert.equal(calls, 2)
+  scheduler.stop(statusFile)
+})
+
+test("callback exceptions have three persisted backoffs then terminal failure, even across schedulers", async (context) => {
+  const errors = context.mock.method(console, "error", () => {})
+  const { statusFile, options, tick, queued } = await fixture()
+  let scheduler = createTaskCheckInScheduler(options)
+  const attempts: number[] = []
+  const callback = () => {
+    attempts.push(options.now())
+    throw new Error("offline")
+  }
+  await scheduler.watch(statusFile, callback)
+  await scheduler.schedule(statusFile, 120)
+  await tick(120)
+  for (const [before, due] of [[1119, 1120], [6119, 6120], [36119, 36120]]) {
+    scheduler.stop(statusFile)
+    scheduler = createTaskCheckInScheduler(options)
+    const competitor = createTaskCheckInScheduler(options)
+    await scheduler.watch(statusFile, callback)
+    await competitor.watch(statusFile, callback)
+    const count = attempts.length
+    await tick(before!)
+    assert.equal(attempts.length, count)
+    await tick(due!)
+    assert.equal(attempts.length, count + 1)
+    competitor.stop(statusFile)
+  }
+  assert.deepEqual(attempts, [120, 1120, 6120, 36120])
+  assert.equal(queued().length, 0)
+  assert.match(String(errors.mock.calls.at(-1)!.arguments[0]), /terminal failure.*4 callback exceptions/)
+  scheduler.stop(statusFile)
+  scheduler = createTaskCheckInScheduler(options)
+  await scheduler.watch(statusFile, callback)
+  await tick(100_000)
+  assert.equal(attempts.length, 4)
+  await scheduler.schedule(statusFile, 100_100)
+  await tick(100_100)
+  assert.equal(attempts.length, 5)
+  scheduler.stop(statusFile)
+})
+
+test("completion, replacement, or stop while a callback rejects cancels its retry", async (context) => {
+  context.mock.method(console, "error", () => {})
+  for (const action of ["complete", "replace", "stop"] as const) {
+    const { statusFile, options, tick, queued } = await fixture()
+    const scheduler = createTaskCheckInScheduler(options)
+    let calls = 0
+    let reject!: (error: Error) => void
+    let started!: () => void
+    const ready = new Promise<void>(resolve => { started = resolve })
+    await scheduler.watch(statusFile, () => {
+      calls++
+      if (calls > 1) return
+      started()
+      return new Promise<void>((_, fail) => { reject = fail })
+    })
+    await scheduler.schedule(statusFile, 120)
+    const firing = tick(120)
+    await ready
+    if (action === "complete") await writeFile(statusFile, "complete")
+    if (action === "replace") await scheduler.schedule(statusFile, 200)
+    if (action === "stop") scheduler.stop(statusFile)
+    reject(new Error("offline"))
+    await firing
+    assert.equal(queued().length, action === "replace" ? 1 : 0)
+    await tick(199)
+    assert.equal(calls, 1)
+    await tick(200)
+    assert.equal(calls, action === "replace" ? 2 : 1)
+    await tick(40_000)
+    assert.equal(calls, action === "replace" ? 2 : 1)
+    scheduler.stop(statusFile)
+  }
+})
+
+test("a stopped watcher cannot rearm a new watch while its rejection settles", async (context) => {
+  context.mock.method(console, "error", () => {})
+  const { statusFile, options, tick, queued } = await fixture()
+  const scheduler = createTaskCheckInScheduler(options)
+  let started!: () => void
+  const ready = new Promise<void>(resolve => { started = resolve })
+  let reject!: (error: Error) => void
+  let calls = 0
+  const callback = () => {
+    calls++
+    started()
+    return new Promise<void>((_, fail) => { reject = fail })
+  }
+  await scheduler.watch(statusFile, callback)
+  await scheduler.schedule(statusFile, 120)
+  const firing = tick(120)
+  await ready
+  scheduler.stop(statusFile)
+  await scheduler.watch(statusFile, callback)
+  await tick(121)
+  reject(new Error("offline"))
+  await firing
+  assert.equal(queued().length, 0)
+  await tick(1121)
+  assert.equal(calls, 1)
+  scheduler.stop(statusFile)
+})
+
+test("suppression does not consume the exception retry budget", async (context) => {
+  context.mock.method(console, "error", () => {})
+  const { statusFile, options, tick } = await fixture()
+  const scheduler = createTaskCheckInScheduler(options)
+  let calls = 0
+  await scheduler.watch(statusFile, () => {
+    calls++
+    if (calls === 1 || calls === 3 || calls === 5) throw new Error("offline")
+    return calls === 7
+  })
+  await scheduler.schedule(statusFile, 120)
+  for (const due of [120, 1120, 2120, 7120, 8120, 38120, 39120]) await tick(due)
+  assert.equal(calls, 7)
+  await tick(100_000)
+  assert.equal(calls, 7)
+  scheduler.stop(statusFile)
+})
+
+test("invalid retry state fails closed rather than resetting the exception budget", async (context) => {
+  const errors = context.mock.method(console, "error", () => {})
+  for (const retry of [null, {}, { failures: 0, deadline: 120 }, { failures: 4, deadline: 120 },
+    { failures: 1.5, deadline: 120 }, { failures: "1", deadline: 120 }, { failures: 1, deadline: "120" }]) {
+    const { statusFile, options, tick, queued } = await fixture()
+    const scheduler = createTaskCheckInScheduler(options)
+    await scheduler.schedule(statusFile, 120)
+    const { id } = JSON.parse(await readFile(`${statusFile}.check-in`, "utf8"))
+    await writeFile(`${statusFile}.check-in.${id}.retry`, JSON.stringify(retry))
+    let calls = 0
+    await scheduler.watch(statusFile, () => { calls++ })
+    await tick(120)
+    assert.equal(calls, 0)
+    assert.equal(queued().length, 0)
+    assert.equal((errors.mock.calls.at(-1)!.arguments[1] as Error).message, "invalid check-in retry state")
+    scheduler.stop(statusFile)
+    const resumed = createTaskCheckInScheduler(options)
+    await resumed.watch(statusFile, () => { calls++ })
+    await tick(1120)
+    assert.equal(calls, 0)
+    resumed.stop(statusFile)
+  }
+})
+
+test("retry sidecar read and write failures retain the claim without automatic filesystem retries", async (context) => {
+  const errors = context.mock.method(console, "error", () => {})
+  for (const operation of ["read", "write"] as const) {
+    const { statusFile, options, tick, queued } = await fixture()
+    const scheduler = createTaskCheckInScheduler(options)
+    await scheduler.schedule(statusFile, 120)
+    const { id } = JSON.parse(await readFile(`${statusFile}.check-in`, "utf8"))
+    const retryFile = `${statusFile}.check-in.${id}.retry`
+    if (operation === "read") await mkdir(retryFile)
+    let calls = 0
+    await scheduler.watch(statusFile, async () => {
+      calls++
+      await mkdir(retryFile)
+      throw new Error("offline")
+    })
+    await tick(120)
+    assert.equal(calls, operation === "write" ? 1 : 0)
+    assert.equal((errors.mock.calls.at(-1)!.arguments[1] as NodeJS.ErrnoException).code, "EISDIR")
+    assert.equal(queued().length, 0)
+    await rm(retryFile, { recursive: true })
+    scheduler.stop(statusFile)
+    const resumed = createTaskCheckInScheduler(options)
+    await resumed.watch(statusFile, () => { calls++ })
+    await tick(1120)
+    assert.equal(calls, operation === "write" ? 1 : 0)
+    resumed.stop(statusFile)
+  }
+})
+
+test("a crash-held claim is not reclaimed even with persisted retry state", async () => {
+  const { statusFile, options, tick } = await fixture()
+  const scheduler = createTaskCheckInScheduler(options)
+  await scheduler.schedule(statusFile, 120)
+  const { id } = JSON.parse(await readFile(`${statusFile}.check-in`, "utf8"))
+  await writeFile(`${statusFile}.check-in.${id}.claimed`, "")
+  await writeFile(`${statusFile}.check-in.${id}.retry`, JSON.stringify({ failures: 1, deadline: 1120 }))
+  await scheduler.watch(statusFile, () => assert.fail("crash-held claim redelivered"))
+  await tick(120)
+  await tick(1120)
+  scheduler.stop(statusFile)
+})
+
+test("stopping or replacing a pending retry removes the old wakeup", async (context) => {
+  context.mock.method(console, "error", () => {})
+  for (const action of ["stop", "replace"] as const) {
+    const { statusFile, options, tick, queued } = await fixture()
+    const scheduler = createTaskCheckInScheduler(options)
+    let calls = 0
+    await scheduler.watch(statusFile, () => {
+      if (++calls === 1) throw new Error("offline")
+    })
+    await scheduler.schedule(statusFile, 120)
+    await tick(120)
+    assert.equal(queued().length, 1)
+    if (action === "stop") scheduler.stop(statusFile)
+    else await scheduler.schedule(statusFile, 200)
+    assert.equal(queued().length, action === "stop" ? 0 : 1)
+    await tick(200)
+    await tick(1120)
+    assert.equal(calls, action === "stop" ? 1 : 2)
+    scheduler.stop(statusFile)
+  }
 })
 
 test("completion during a suppressed callback prevents retry", async () => {
