@@ -33,7 +33,9 @@ async function fixture() {
     }
     await Promise.all(firing)
   }
-  return { statusFile, options, tick }
+  // Timer callbacks can already be queued when canceled, or fire before a long deadline.
+  const queued = () => [...pending.values()].map(timer => timer.callback)
+  return { statusFile, options, tick, queued }
 }
 
 test("restores a deadline after reload and claims it only once", async () => {
@@ -137,6 +139,114 @@ test("check-in reports task start time and running status", async (context) => {
   assert.match(messages[0]!.content, /status: running; elapsed: 2 minutes/)
 })
 
+test("non-finite deadlines are rejected without replacing a scheduled check-in", async () => {
+  const { statusFile, options, tick } = await fixture()
+  const scheduler = createTaskCheckInScheduler(options)
+  let calls = 0
+  await scheduler.watch(statusFile, () => { calls++ })
+  await scheduler.schedule(statusFile, 120)
+  for (const deadline of [NaN, Infinity, -Infinity]) {
+    await assert.rejects(scheduler.schedule(statusFile, deadline), RangeError)
+  }
+  await tick(120)
+  assert.equal(calls, 1)
+  scheduler.stop(statusFile)
+})
+
+test("timer requests respect deadlines and the platform delay limit", async () => {
+  const { statusFile, options } = await fixture()
+  const delays: number[] = []
+  const scheduler = createTaskCheckInScheduler({
+    ...options,
+    setTimer(callback, delay) {
+      delays.push(delay)
+      return options.setTimer(callback, delay)
+    },
+  })
+  await scheduler.watch(statusFile, () => {})
+  await scheduler.schedule(statusFile, 150)
+  await scheduler.schedule(statusFile, 99)
+  await scheduler.schedule(statusFile, 3_000_000_100)
+  assert.deepEqual(delays, [50, 0, 2_147_483_647])
+  scheduler.stop(statusFile)
+})
+
+test("an early timer wakeup waits until the deadline", async () => {
+  const { statusFile, options, tick, queued } = await fixture()
+  const scheduler = createTaskCheckInScheduler(options)
+  let calls = 0
+  await scheduler.watch(statusFile, () => { calls++ })
+  await scheduler.schedule(statusFile, 150)
+  await queued()[0]!()
+  assert.equal(calls, 0)
+  await tick(149)
+  assert.equal(calls, 0)
+  await tick(150)
+  assert.equal(calls, 1)
+  scheduler.stop(statusFile)
+})
+
+test("a canceled but already queued timer cannot notify after stop", async () => {
+  const { statusFile, options, tick, queued } = await fixture()
+  const scheduler = createTaskCheckInScheduler(options)
+  let calls = 0
+  await scheduler.watch(statusFile, () => { calls++ })
+  await scheduler.schedule(statusFile, 100)
+  const callback = queued()[0]!
+  scheduler.stop(statusFile)
+  await callback()
+  await tick(101)
+  assert.equal(calls, 0)
+})
+
+test("a suppressed check-in retries after one second, not before", async () => {
+  const { statusFile, options, tick } = await fixture()
+  const scheduler = createTaskCheckInScheduler(options)
+  let calls = 0
+  await scheduler.watch(statusFile, () => ++calls > 1)
+  await scheduler.schedule(statusFile, 120)
+  await tick(120)
+  assert.equal(calls, 1)
+  await tick(1119)
+  assert.equal(calls, 1)
+  await tick(1120)
+  assert.equal(calls, 2)
+  await tick(2120)
+  assert.equal(calls, 2)
+  scheduler.stop(statusFile)
+})
+
+test("stopping while a check-in is suppressed prevents retry wakeups", async () => {
+  const { statusFile, options, tick, queued } = await fixture()
+  const scheduler = createTaskCheckInScheduler(options)
+  let calls = 0
+  await scheduler.watch(statusFile, () => {
+    calls++
+    scheduler.stop(statusFile)
+    return false
+  })
+  await scheduler.schedule(statusFile, 120)
+  await tick(120)
+  assert.equal(queued().length, 0)
+  await tick(1120)
+  assert.equal(calls, 1)
+})
+
+test("a queued superseded timer cannot steal the replacement deadline", async () => {
+  const { statusFile, options, tick, queued } = await fixture()
+  const scheduler = createTaskCheckInScheduler(options)
+  let calls = 0
+  await scheduler.watch(statusFile, () => { calls++ })
+  await scheduler.schedule(statusFile, 100)
+  const stale = queued()[0]!
+  await scheduler.schedule(statusFile, 150)
+  await stale()
+  assert.equal(calls, 0)
+  await tick(150)
+  assert.equal(calls, 1)
+  scheduler.stop(statusFile)
+})
+
 test("stop keeps the deadline across a reload", async () => {
   const { statusFile, options, tick } = await fixture()
   const scheduler = createTaskCheckInScheduler(options)
@@ -149,5 +259,56 @@ test("stop keeps the deadline across a reload", async () => {
   await scheduler.watch(statusFile, () => { calls++ })
   await tick(121)
   assert.equal(calls, 1)
+  scheduler.stop(statusFile)
+})
+
+test("invalid persisted deadline shapes do not arm a check-in", async () => {
+  for (const state of [null, 1, "bad", {}, { id: "a" }, { deadline: 120 }, { id: 1, deadline: 120 }, { id: "a", deadline: "120" }]) {
+    const { statusFile, options, queued } = await fixture()
+    await writeFile(`${statusFile}.check-in`, JSON.stringify(state))
+    const scheduler = createTaskCheckInScheduler(options)
+    await scheduler.watch(statusFile, () => assert.fail("invalid deadline notified"))
+    assert.equal(queued().length, 0)
+    scheduler.stop(statusFile)
+  }
+})
+
+test("watch reports corrupt JSON instead of silently losing a deadline", async () => {
+  const { statusFile, options } = await fixture()
+  await writeFile(`${statusFile}.check-in`, "{broken")
+  const scheduler = createTaskCheckInScheduler(options)
+  await assert.rejects(scheduler.watch(statusFile, () => {}), SyntaxError)
+  scheduler.stop(statusFile)
+})
+
+test("completion during a suppressed callback prevents retry", async () => {
+  const { statusFile, options, tick, queued } = await fixture()
+  const scheduler = createTaskCheckInScheduler(options)
+  await scheduler.watch(statusFile, async () => {
+    await writeFile(statusFile, "complete")
+    return false
+  })
+  await scheduler.schedule(statusFile, 120)
+  await tick(120)
+  assert.equal(queued().length, 0)
+  scheduler.stop(statusFile)
+})
+
+test("rescheduling during suppression preserves the replacement deadline", async () => {
+  const { statusFile, options, tick } = await fixture()
+  const scheduler = createTaskCheckInScheduler(options)
+  let calls = 0
+  await scheduler.watch(statusFile, async () => {
+    if (++calls === 1) {
+      await scheduler.schedule(statusFile, 200)
+      return false
+    }
+  })
+  await scheduler.schedule(statusFile, 120)
+  await tick(120)
+  await tick(199)
+  assert.equal(calls, 1)
+  await tick(200)
+  assert.equal(calls, 2)
   scheduler.stop(statusFile)
 })

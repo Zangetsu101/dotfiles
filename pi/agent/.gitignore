@@ -1,2 +1,4 @@
 node_modules/
 evals/results/
+.stryker-tmp/
+reports/mutation/
