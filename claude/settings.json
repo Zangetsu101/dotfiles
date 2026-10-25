@@ -29,15 +29,6 @@
             "command": "~/.claude/hooks/block-env-reads.sh"
           }
         ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "rtk hook claude"
-          }
-        ]
       }
     ],
     "PostToolUse": [
