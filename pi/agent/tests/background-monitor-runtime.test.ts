@@ -230,7 +230,7 @@ test("reload hands a running monitor to the replacement runtime and reports its 
   assert.equal(outgoing.messages.length, 0)
   assert.deepEqual(outgoing.activity.finished, ["background-monitor:one"])
   assert.match(replacement.messages[0].content, /finished with exit code 0/)
-  assert.match(replacement.messages[0].content, /Review the result\. When all background work has returned, provide the complete standalone result/)
+  assert.match(replacement.messages[0].content, /Review the result and continue the conversation's pending work\./)
   assert.equal(replacement.messages[0].details.status, "completed")
   assert.equal(replacement.messages[0].details.exitCode, 0)
   assert.equal(replacement.messages[0].details.output, "(no output)")

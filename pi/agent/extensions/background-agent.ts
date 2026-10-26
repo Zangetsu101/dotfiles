@@ -25,6 +25,7 @@ import {
 } from "./lib/background-task.ts"
 import { familyForContext, familyTaskParent, type TaskFamily } from "./lib/background-family.ts"
 import { taskCheckIns } from "./lib/task-check-in.ts"
+import { backgroundLifecycleGuidelines, backgroundCompletionGuidance } from "./lib/background-prompts.ts"
 import { notifyRunningTask } from "./lib/background-task-check-in.ts"
 import { backgroundAttachCommand } from "./lib/background-attach.ts"
 import { backgroundToolRenderers, registerBackgroundMessages } from "./lib/background-rendering.ts"
@@ -183,9 +184,9 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
     ],
     parameters: Type.Object({
       activity: Type.String({ minLength: 1, maxLength: 2000 }),
-      state: Type.Optional(Type.Union([Type.Literal("working"), Type.Literal("blocked"), Type.Literal("completed"), Type.Literal("failed")])),
+      state: Type.Optional(Type.Union([Type.Literal("working"), Type.Literal("blocked"), Type.Literal("completed"), Type.Literal("failed")], { description: "Assignment state. Defaults to working." })),
       help: Type.Optional(Type.String({ maxLength: 2000 })),
-      attention: Type.Optional(Type.Boolean()),
+      attention: Type.Optional(Type.Boolean({ description: "Set true with state blocked and help to request parent intervention." })),
     }),
     async execute(_id, params) {
       if (!params.activity.trim()) throw new Error("Activity must not be empty")
@@ -523,7 +524,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         {
           customType: "background-agent",
           details: { summary, label: agent.label, status: taskStatus === "succeeded" ? "completed" : taskStatus, id: agent.id, target: agent.target, output, attach, exitCode: completion.exitCode },
-          content: `${summary}\nAttach with: ${attach}\n\nFinal output:\n${output}\n\nReview the result and report it to the user.`,
+          content: `${summary}\nAttach with: ${attach}\n\nFinal output:\n${output}\n\n${backgroundCompletionGuidance}`,
           display: true,
         },
         { deliverAs: "steer", triggerTurn: true },
@@ -561,6 +562,9 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     ...backgroundToolRenderers("background_agent_message"),
     label: "Message background agent",
     description: "Send a message to a live background agent, including follow-up work after assignment completion. Steers its active turn or starts a new turn if idle; waits for delivery acknowledgement.",
+    promptGuidelines: [
+      "Use background_agent_message to steer an active assignment or send follow-up work to an idle agent in your task subtree. Wait for its delivery acknowledgement before treating the message as received.",
+    ],
     parameters: Type.Object({ id: Type.String(), message: Type.String() }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       if (!family) await restoreFamily("startup", ctx)
@@ -624,10 +628,8 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     promptSnippet: "Delegate work to an inspectable Pi agent running in tmux",
     promptGuidelines: [
       "Delegated Pi work: use background_agent so the user can inspect it.",
-      "After spawning a task, continue independent work. When only background work remains, yield by ending your turn with a brief progress update. Completion and check-in notifications automatically resume you without a user reply. Inspect tasks only to handle a check-in or diagnose a concrete failure.",
-      "While delegated work is active, report progress rather than claiming a final result. After it's finished, handle its result and return to the conversation's pending work. If the user was waiting to answer a question or make a decision, reconsider it in light of the result and restate the question. If no user input is pending and the work is complete, provide a standalone final result.",
-      "Use background_agent_message to steer a running agent in your task subtree; wait for its delivery acknowledgement before treating the message as received.",
-      "After a check-in, use background_task to inspect the task and schedule another check-in if needed. Continue following up until it finishes or needs intervention."
+      "Set allowDelegation: true when the child's assignment requires it to spawn agents.",
+      ...backgroundLifecycleGuidelines,
     ],
     parameters: Type.Object({
       task: Type.String({ description: "Task for the background Pi agent" }),

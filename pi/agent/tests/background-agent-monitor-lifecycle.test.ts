@@ -64,7 +64,7 @@ for (const outcome of ["settled", "exit"] as const) test(outcome === "settled"
     await writeFile(agent.statusFile, JSON.stringify(completion))
     await waitFor(() => messages.length === 1)
     const sent = messages[0] as { content: string; details: { output: string; status: string } }
-    assert.match(sent.content, /Review the result and report it to the user\.$/)
+    assert.match(sent.content, /Review the result and continue the conversation's pending work\.$/)
     assert.equal(sent.details.output, "done")
     assert.equal(sent.details.status, outcome === "exit" ? "failed" : "completed")
     const afterCompletion = claims

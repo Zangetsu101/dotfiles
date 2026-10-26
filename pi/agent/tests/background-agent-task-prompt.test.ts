@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
 import test from "node:test"
 import backgroundAgentExtension from "../extensions/background-agent.ts"
+import backgroundMonitorExtension from "../extensions/background-monitor.ts"
 import { FakePiRuntime } from "./support/background-task-runtime.ts"
 import { installBackgroundTaskEnvironmentHooks } from "./support/background-task-environment.ts"
 
@@ -19,6 +20,27 @@ test("delegation guidelines define yielding, automatic resumption, and inspectio
   assert.match(yielding, /Inspect tasks only.*check-in.*concrete failure/)
 })
 
+test("monitor-only children retain lifecycle guidance and messaging owns acknowledgement", async () => {
+  process.env.PI_BACKGROUND_AGENT_STATUS_FILE = "/tmp/monitor-prompt-test"
+  const runtime = new FakePiRuntime()
+  backgroundMonitorExtension(runtime.pi)
+  await backgroundAgentExtension(runtime.pi)
+  assert.equal(runtime.tools.has("background_agent"), false)
+  const monitor = runtime.tools.get("background_monitor")
+  const lifecycle = monitor.promptGuidelines.join("\n")
+  assert.match(lifecycle, /continue independent work/)
+  assert.match(lifecycle, /ending your turn.*progress update/)
+  assert.match(lifecycle, /automatically resume.*without a user reply/)
+  assert.match(lifecycle, /Inspect tasks only.*check-in.*concrete failure/)
+  assert.match(lifecycle, /If the user was waiting.*restate the question/)
+  assert.match(lifecycle, /all background work is complete.*standalone final result/)
+  assert.match(runtime.tools.get("background_agent_message").promptGuidelines.join("\n"), /follow-up work.*delivery acknowledgement/)
+  const parameters = runtime.tools.get("background_task").parameters.properties
+  assert.match(parameters.id.description, /Required for inspect, check-in, and terminate/)
+  assert.match(parameters.afterMinutes.description, /Only the agent that spawned/)
+  assert.match(runtime.tools.get("background_task").promptGuidelines.join("\n"), /inspect the task.*schedule another check-in.*Continue following up/)
+})
+
 test("child progress guidelines require the reporting tool at the start and activity changes", async () => {
   process.env.PI_BACKGROUND_AGENT_STATUS_FILE = "/tmp/progress-guidelines-test"
   const runtime = new FakePiRuntime()
@@ -27,6 +49,9 @@ test("child progress guidelines require the reporting tool at the start and acti
   assert.match(guidelines, /Call background_agent_report before starting/)
   assert.match(guidelines, /Call it again when your activity changes/)
   assert.match(guidelines, /state.*blocked/)
+  const parameters = runtime.tools.get("background_agent_report").parameters.properties
+  assert.match(parameters.state.description, /Defaults to working/)
+  assert.match(parameters.attention.description, /request parent intervention/)
 })
 
 for (const maxDepth of [1, 3]) test(`background agents respect a configured maximum depth of ${maxDepth}`, async () => {

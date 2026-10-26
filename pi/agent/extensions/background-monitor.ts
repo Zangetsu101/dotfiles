@@ -5,6 +5,7 @@ import { BACKGROUND_ACTIVITY_FINISHED, BACKGROUND_ACTIVITY_STARTED, type Backgro
 import { BACKGROUND_TASK_CREATED, BACKGROUND_TASK_REMOVED, BACKGROUND_TASK_STATUS_CHANGED, BackgroundTasks, taskCompletionStatus, safeTaskLabel, type BackgroundTask } from "./lib/background-task.ts"
 import { FAMILY_ENTRY, familyForContext, familyTaskParent, type TaskFamily } from "./lib/background-family.ts"
 import { taskCheckIns } from "./lib/task-check-in.ts"
+import { backgroundLifecycleGuidelines, backgroundCompletionGuidance } from "./lib/background-prompts.ts"
 import { notifyRunningTask, readOutputTail } from "./lib/background-task-check-in.ts"
 import { backgroundAttachCommand } from "./lib/background-attach.ts"
 import { backgroundToolRenderers, registerBackgroundMessages } from "./lib/background-rendering.ts"
@@ -194,7 +195,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       const attach = backgroundAttachCommand(task)
       if (!active()) return
       if (ctx.hasUI) ctx.ui.notify(summary, failed ? "error" : "info")
-      pi.sendMessage({ customType: "background-monitor", details: { summary, label: task.label, status: completion.status === "cancelled" ? "terminated" : completion.status, id: task.id, target: task.target, output: output.trim() || "(no output)", attach, exitCode: completion.exitCode }, content: `${summary}\nAttach with: ${attach}\n\nOutput:\n${output.trim() || "(no output)"}\n\nReview the result. When all background work has returned, provide the complete standalone result in your final turn, including any conclusions that remain unchanged.`, display: true }, { deliverAs: "steer", triggerTurn: true })
+      pi.sendMessage({ customType: "background-monitor", details: { summary, label: task.label, status: completion.status === "cancelled" ? "terminated" : completion.status, id: task.id, target: task.target, output: output.trim() || "(no output)", attach, exitCode: completion.exitCode }, content: `${summary}\nAttach with: ${attach}\n\nOutput:\n${output.trim() || "(no output)"}\n\n${backgroundCompletionGuidance}`, display: true }, { deliverAs: "steer", triggerTurn: true })
     }
     const launchConsume = () => {
       const pending = consume()
@@ -256,7 +257,11 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     label: "Background monitor",
     description: "Run a slow, finite shell command asynchronously in an inspectable tmux task. Wake the parent at the expected duration if still running, and on exit with status and bounded output.",
     promptSnippet: "Run slow, finite shell commands asynchronously in inspectable tmux tasks",
-    promptGuidelines: ["Use bash by default. Use background_monitor for finite commands expected to run longer than 60 seconds, based on prior runs or known workload. For unknown runtimes, start with bash.", "After a check-in, use background_task to inspect the task and schedule another check-in if needed.", "Keep monitor output visible in its tmux pane; the tool already captures pane output. If you also need a separate log, use set -o pipefail; command 2>&1 | tee /path/to/log."],
+    promptGuidelines: [
+      "Use bash by default. Use background_monitor for finite commands expected to run longer than 60 seconds, based on prior runs or known workload. For unknown runtimes, start with bash.",
+      ...backgroundLifecycleGuidelines,
+      "Keep monitor output visible in its tmux pane; the tool already captures pane output. If you also need a separate log, use set -o pipefail; command 2>&1 | tee /path/to/log.",
+    ],
     parameters: Type.Object({ command: Type.String({ description: "Slow, finite shell command to run asynchronously until it exits" }), label: Type.Optional(Type.String({ description: "Short description shown on completion" })), expectedRunningMinutes: Type.Number({ minimum: 1, description: "Minutes until the parent agent receives a check-in if the command is still running" }) }),
     async execute(_id, params, _signal, _update, ctx) {
       if (!(await tasks.available())) throw new Error("background_monitor requires tmux on PATH")
@@ -279,10 +284,13 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     ...backgroundToolRenderers("background_task"),
     label: "Background task",
     description: "List, inspect, schedule another check-in for, or terminate a task in your subtree.",
+    promptGuidelines: [
+      "After a check-in, use background_task to inspect the task and schedule another check-in if needed. Continue following up until it finishes or needs intervention.",
+    ],
     parameters: Type.Object({
       action: Type.Union([Type.Literal("list"), Type.Literal("inspect"), Type.Literal("check-in"), Type.Literal("terminate")]),
-      id: Type.Optional(Type.String()),
-      afterMinutes: Type.Optional(Type.Number({ minimum: 1 })),
+      id: Type.Optional(Type.String({ description: "Task ID. Required for inspect, check-in, and terminate; omitted for list." })),
+      afterMinutes: Type.Optional(Type.Number({ minimum: 1, description: "Required for check-in: minutes until the next notification. Only the agent that spawned the task can schedule its check-ins." })),
     }),
     async execute(_id, params, _signal, _update, ctx) {
       if (!family) await restoreFamily("startup", ctx)
