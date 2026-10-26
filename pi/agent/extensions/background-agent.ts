@@ -107,7 +107,7 @@ type BackgroundAgentOptions = {
   tasks?: BackgroundTasks
   tmux?: TmuxProcessAdapter
   millisecondsPerMinute?: number
-  checkIns?: typeof taskCheckIns
+  checkIns?: ReturnType<typeof taskCheckIns>
   now?: () => number
   pollMs?: number
   settledPollMs?: number
@@ -317,7 +317,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   const tasks = options.tasks ?? new BackgroundTasks(options.tmux ?? systemTmux)
   const tmux = options.tmux ?? directTmux
   const millisecondsPerMinute = options.millisecondsPerMinute ?? 60_000
-  const checkIns = options.checkIns ?? taskCheckIns
+  const checkIns = options.checkIns ?? taskCheckIns(pi.events)
   const now = options.now ?? Date.now
   const pollMs = options.pollMs ?? POLL_MS
   const settledPollMs = options.settledPollMs ?? SETTLED_POLL_MS

@@ -3,7 +3,7 @@ export default {
   testRunner: 'tap',
   plugins: ['@stryker-mutator/tap-runner'],
   tap: {
-    testFiles: ['tests/task-check-in.test.ts', 'tests/background-family.test.ts', 'tests/background-family-context.test.ts'],
+    testFiles: ['tests/task-check-in.test.ts', 'tests/background-check-in-loader.test.ts', 'tests/background-family.test.ts', 'tests/background-family-context.test.ts'],
     nodeArgs: ['--experimental-strip-types', '--test-reporter=tap', '-r', '{{hookFile}}', '{{testFile}}'],
     forceBail: false,
   },
