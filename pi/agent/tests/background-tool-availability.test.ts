@@ -60,7 +60,8 @@ test("live agents remain messageable after completion but not after runtime exit
   } finally { await runtime.emit("session_shutdown", { reason: "reload" }) }
 })
 
-for (const maxDepth of [1, 3]) for (const depth of [maxDepth - 1, maxDepth, maxDepth + 1]) test(`child tools at depth ${depth} with limit ${maxDepth}`, async () => {
+for (const grant of [undefined, "0", "true", "1"]) for (const maxDepth of [1, 3]) for (const depth of [maxDepth - 1, maxDepth, maxDepth + 1]) test(`child tools with grant ${grant} at depth ${depth} with limit ${maxDepth}`, async () => {
+  if (grant !== undefined) process.env.PI_BACKGROUND_AGENT_ALLOW_DELEGATION = grant
   process.env.PI_BACKGROUND_AGENT_STATUS_FILE = `/tmp/availability-child-${process.pid}`
   process.env.PI_BACKGROUND_AGENT_DEPTH = String(depth)
   process.env.PI_BACKGROUND_AGENT_MAX_DEPTH = String(maxDepth)
@@ -70,8 +71,15 @@ for (const maxDepth of [1, 3]) for (const depth of [maxDepth - 1, maxDepth, maxD
   const { runtime } = await start()
   try {
     const expected = ["background_agent_report", "background_monitor", "bash", "read"]
-    if (depth < maxDepth) expected.push("background_agent")
+    const allowed = grant === "1" && depth < maxDepth
+    if (allowed) expected.push("background_agent")
     assert.deepEqual(active(runtime), expected.sort())
+    assert.equal(runtime.tools.has("background_agent"), allowed)
+    if (!allowed) {
+      runtime.pi.setActiveTools([...runtime.activeTools, "background_agent"])
+      assert.ok(!runtime.activeTools.includes("background_agent"))
+      await assert.rejects(runtime.execute("background_agent", { task: "bypass", expectedCompletionMinutes: 1 }))
+    }
   } finally { await runtime.emit("session_shutdown", { reason: "reload" }) }
 })
 
@@ -220,6 +228,42 @@ test("a descendant exit during discovery cannot occur before completion observat
     await new Promise((resolve) => setTimeout(resolve, 40))
     assert.ok(!runtime.activeTools.includes("background_agent_message"))
   } finally { await runtime.emit("session_shutdown", { reason: "reload" }) }
+})
+
+for (const allowDelegation of [undefined, false, true]) test(`spawn grants delegation only explicitly: ${allowDelegation}`, async () => {
+  process.env.PI_BACKGROUND_AGENT_ALLOW_DELEGATION = "1"
+  process.env.PI_BACKGROUND_AGENT_MAX_DEPTH = "3"
+  const { runtime, tasks } = await start()
+  const create = tasks.create.bind(tasks)
+  let childEnv: Record<string, string> = {}
+  tasks.create = async (input) => {
+    childEnv = input.env ?? {}
+    return create(input)
+  }
+  let child: Awaited<ReturnType<typeof start>> | undefined
+  try {
+    await runtime.execute("background_agent", { task: "review", expectedCompletionMinutes: 1, allowDelegation })
+    assert.equal(childEnv.PI_BACKGROUND_AGENT_ALLOW_DELEGATION, allowDelegation === true ? "1" : "0")
+    assert.equal(childEnv.PI_BACKGROUND_AGENT_DEPTH, "1")
+    assert.equal(childEnv.PI_BACKGROUND_AGENT_MAX_DEPTH, "3")
+    Object.assign(process.env, childEnv)
+    process.env.PI_BACKGROUND_AGENT_STATUS_FILE = `/tmp/grant-child-${process.pid}`
+    child = await start()
+    assert.equal(child.runtime.tools.has("background_agent"), allowDelegation === true)
+    assert.ok(child.runtime.tools.has("background_agent_report"))
+    assert.ok(child.runtime.tools.has("background_monitor"))
+    if (allowDelegation === true) {
+      const childCreate = child.tasks.create.bind(child.tasks)
+      let grandchildEnv: Record<string, string> = {}
+      child.tasks.create = async (input) => { grandchildEnv = input.env ?? {}; return childCreate(input) }
+      await child.runtime.execute("background_agent", { task: "review", expectedCompletionMinutes: 1 })
+      assert.equal(grandchildEnv.PI_BACKGROUND_AGENT_ALLOW_DELEGATION, "0")
+      assert.equal(grandchildEnv.PI_BACKGROUND_AGENT_DEPTH, "2")
+    }
+  } finally {
+    await child?.runtime.emit("session_shutdown", { reason: "reload" })
+    await runtime.emit("session_shutdown", { reason: "reload" })
+  }
 })
 
 test("Root Pi starts with spawn and monitor tools without empty-subtree operations", async () => {

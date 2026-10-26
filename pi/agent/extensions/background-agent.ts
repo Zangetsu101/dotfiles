@@ -36,6 +36,7 @@ const execFileAsync = promisify(execFile)
 const STATUS_FILE_ENV = "PI_BACKGROUND_AGENT_STATUS_FILE"
 const DEPTH_ENV = "PI_BACKGROUND_AGENT_DEPTH"
 const MAX_DEPTH_ENV = "PI_BACKGROUND_AGENT_MAX_DEPTH"
+const ALLOW_DELEGATION_ENV = "PI_BACKGROUND_AGENT_ALLOW_DELEGATION"
 const AGENT_LABEL_ENV = "PI_BACKGROUND_AGENT_LABEL"
 const DEFAULT_MAX_AGENT_DEPTH = 3
 const MAX_RESULT_CHARS = 50_000
@@ -588,7 +589,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     },
   })
 
-  if (depth < maxDepth) pi.registerTool({
+  if ((!childStatusFile || process.env[ALLOW_DELEGATION_ENV] === "1") && depth < maxDepth) pi.registerTool({
     name: "background_agent",
     ...backgroundToolRenderers("background_agent"),
     label: "Background agent",
@@ -606,6 +607,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       task: Type.String({ description: "Task for the background Pi agent" }),
       label: Type.Optional(Type.String({ description: "Short human-readable label" })),
       cwd: Type.Optional(Type.String({ description: "Working directory; defaults to the current directory" })),
+      allowDelegation: Type.Optional(Type.Boolean({ description: "Allow this child to delegate to agents within the depth ceiling. Defaults to false; each spawn requires an explicit grant." })),
       expectedCompletionMinutes: Type.Number({ minimum: 1, description: "Expected task duration in minutes; triggers a check-in if the agent exceeds it" }),
     }),
 
@@ -628,7 +630,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         kind: "agent", label, cwd: params.cwd ?? ctx.cwd, ...familyTaskParent(family!, parentTarget),
         command: invocation.command, args: piArgs, interactiveAfterExit: true,
         statusFileEnv: STATUS_FILE_ENV,
-        env: { [AGENT_LABEL_ENV]: label, [DEPTH_ENV]: String(depth + 1), [MAX_DEPTH_ENV]: String(maxDepth), PI_BACKGROUND_AGENT_PARENT: parentTarget },
+        env: { [AGENT_LABEL_ENV]: label, [DEPTH_ENV]: String(depth + 1), [MAX_DEPTH_ENV]: String(maxDepth), [ALLOW_DELEGATION_ENV]: params.allowDelegation === true ? "1" : "0", PI_BACKGROUND_AGENT_PARENT: parentTarget },
         metadata: { "@pi_agent_status": "running", "@pi_agent_model": model, "@pi_agent_thinking": thinking, "@pi_agent_expected_completion_at": String(expectedCompletionAt) },
       })
       const { id, target, statusFile } = task

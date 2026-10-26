@@ -34,6 +34,7 @@ for (const maxDepth of [1, 3]) test(`background agents respect a configured maxi
   const previousDepth = process.env.PI_BACKGROUND_AGENT_DEPTH
   const previousMaxDepth = process.env.PI_BACKGROUND_AGENT_MAX_DEPTH
   const previousTmuxPane = process.env.TMUX_PANE
+  process.env.PI_BACKGROUND_AGENT_ALLOW_DELEGATION = "1"
   process.env.PI_BACKGROUND_AGENT_MAX_DEPTH = String(maxDepth)
   process.env.TMUX_PANE = "%isolated-depth-test"
   const registeredAtDepth = async (depth: string) => {
