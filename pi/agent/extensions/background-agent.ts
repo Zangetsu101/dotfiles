@@ -163,6 +163,12 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
   const setWindowOption = async (key: string, value: string) => {
     if (pane) await tmux.run(["set-option", "-w", "-t", pane, key, value]).catch(() => undefined)
   }
+  let hasReport = false
+  pi.on("tool_call", (event) => {
+    if (!hasReport && event.toolName !== "background_agent_report") {
+      return { block: true, reason: "Call background_agent_report successfully before starting assignment work." }
+    }
+  })
   pi.registerTool({
     name: "background_agent_report",
     label: "Report assignment progress",
@@ -189,6 +195,7 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
         }
         return progress
       })
+      hasReport = true
       return { content: [{ type: "text", text: "Progress recorded" }], details: { progress } }
     },
   })
@@ -242,6 +249,7 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
       setWindowOption("@pi_task_status", "running"),
     ])
     reported = false
+    hasReport = false
   })
 
   pi.events.on(BACKGROUND_ACTIVITY_STARTED, (data) => {
