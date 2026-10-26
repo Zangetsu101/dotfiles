@@ -29,7 +29,7 @@ import { notifyRunningTask } from "./lib/background-task-check-in.ts"
 import { backgroundAttachCommand } from "./lib/background-attach.ts"
 import { backgroundToolRenderers, registerBackgroundMessages } from "./lib/background-rendering.ts"
 
-import { reportAgentProgress, readAgentProgress, describeAgentProgress } from "./lib/background-progress.ts"
+import { reportAgentProgress, readAgentProgress, describeAgentProgress, type AgentReport } from "./lib/background-progress.ts"
 import { canMessageBackgroundAgent, setBackgroundToolActive } from "./lib/background-tool-availability.ts"
 
 const execFileAsync = promisify(execFile)
@@ -42,6 +42,7 @@ const DEFAULT_MAX_AGENT_DEPTH = 3
 const MAX_RESULT_CHARS = 50_000
 const POLL_MS = 100
 const SETTLED_POLL_MS = 2_000
+const STALE_REPORT_MS = 5 * 60_000
 
 type AgentSession = {
   id: string
@@ -164,6 +165,8 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
     if (pane) await tmux.run(["set-option", "-w", "-t", pane, key, value]).catch(() => undefined)
   }
   let hasReport = false
+  let latestReport: AgentReport | undefined
+  let reminded = false
   pi.on("tool_call", (event) => {
     if (!hasReport && event.toolName !== "background_agent_report") {
       return { block: true, reason: "Call background_agent_report successfully before starting assignment work." }
@@ -196,6 +199,8 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
         return progress
       })
       hasReport = true
+      latestReport = progress.latest
+      reminded = false
       return { content: [{ type: "text", text: "Progress recorded" }], details: { progress } }
     },
   })
@@ -204,6 +209,17 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
   let busy = false
   let closed = false
   let timer: NodeJS.Timeout | undefined
+  const remindIfStale = () => {
+    if (closed || !processing || reported || reminded || !latestReport) return
+    if (latestReport.state === "blocked" && latestReport.help?.trim()) return
+    if (now() - latestReport.at < STALE_REPORT_MS) return
+    pi.sendMessage({
+      customType: "background-agent-report-reminder",
+      content: "Your last progress report is at least 5 minutes old. Call background_agent_report with your current activity or blocker.",
+      display: true,
+    }, { deliverAs: "steer", triggerTurn: false })
+    reminded = true
+  }
   const receive = async () => {
     if (busy || closed) return
     busy = true
@@ -231,7 +247,7 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
     await mkdir(mailbox, { recursive: true, mode: 0o700 })
     closed = false
     if (timer) clearInterval(timer)
-    timer = setInterval(() => { void receive().catch((error) => console.error("background agent mailbox:", error)) }, pollMs)
+    timer = setInterval(() => { remindIfStale(); void receive().catch((error) => console.error("background agent mailbox:", error)) }, pollMs)
     await receive()
   })
   pi.on("session_shutdown", () => { closed = true; if (timer) clearInterval(timer) })
@@ -250,6 +266,8 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
     ])
     reported = false
     hasReport = false
+    latestReport = undefined
+    reminded = false
   })
 
   pi.events.on(BACKGROUND_ACTIVITY_STARTED, (data) => {
