@@ -75,7 +75,7 @@ test("generic background task metadata does not turn Pi into an agent child brid
 
   try {
     await backgroundAgentExtension({
-      events: { on() {} },
+      events: { on() {}, emit() {} },
       on() {},
       registerCommand() {},
       registerMessageRenderer() {},

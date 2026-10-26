@@ -1,3 +1,4 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { randomUUID } from "node:crypto"
 import { access, open, readFile, rename, rm, writeFile } from "node:fs/promises"
 
@@ -125,4 +126,15 @@ export function createTaskCheckInScheduler(options: {
   }
 }
 
-export const taskCheckIns = createTaskCheckInScheduler()
+export function taskCheckIns(events: ExtensionAPI["events"]): ReturnType<typeof createTaskCheckInScheduler> {
+  const channel = "background-task:check-in-scheduler"
+  let scheduler: ReturnType<typeof createTaskCheckInScheduler> | undefined
+  // Pi loads each extension with an isolated module cache. Share through its runtime bus.
+  events.emit(channel, (shared: ReturnType<typeof createTaskCheckInScheduler>) => { scheduler = shared })
+  if (!scheduler) {
+    const shared = createTaskCheckInScheduler()
+    scheduler = shared
+    events.on(channel, (receive) => { (receive as (scheduler: typeof shared) => void)(shared) })
+  }
+  return scheduler
+}

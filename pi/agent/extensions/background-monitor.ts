@@ -66,7 +66,7 @@ type BackgroundMonitorOptions = {
   tasks?: BackgroundTasks
   pollMs?: number
   subtreeRootId?: string
-  checkIns?: typeof taskCheckIns
+  checkIns?: ReturnType<typeof taskCheckIns>
   now?: () => number
   millisecondsPerMinute?: number
 }
@@ -75,7 +75,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
   registerBackgroundMessages(pi, "monitor")
   const tasks = options.tasks ?? new BackgroundTasks()
   const pollMs = options.pollMs ?? POLL_MS
-  const checkIns = options.checkIns ?? taskCheckIns
+  const checkIns = options.checkIns ?? taskCheckIns(pi.events)
   const now = options.now ?? Date.now
   const millisecondsPerMinute = options.millisecondsPerMinute ?? 60_000
   const configuredSubtreeRootId = options.subtreeRootId
