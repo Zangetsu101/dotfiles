@@ -635,6 +635,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       task: Type.String({ description: "Task for the background Pi agent" }),
       label: Type.Optional(Type.String({ description: "Short human-readable label" })),
       cwd: Type.Optional(Type.String({ description: "Working directory; defaults to the current directory" })),
+      model: Type.Optional(Type.String({ minLength: 1, description: "Model for the child, such as provider/model-id. Defaults to the parent's model." })),
       allowDelegation: Type.Optional(Type.Boolean({ description: "Allow this child to delegate to agents within the depth ceiling. Defaults to false; each spawn requires an explicit grant." })),
       expectedCompletionMinutes: Type.Number({ minimum: 1, description: "Expected task duration in minutes; triggers a check-in if the agent exceeds it" }),
     }),
@@ -646,12 +647,13 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       if (!family) await restoreFamily("startup", ctx)
       const parentTarget = currentTmuxPane() || (await currentTmuxSession(tmux)) || family!.rootPane
       const invocation = piInvocation()
-      const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "default"
+      const selectedModel = params.model ?? (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined)
+      const model = selectedModel ?? "default"
       const thinking = pi.getThinkingLevel()
       const expectedCompletionAt = now() + params.expectedCompletionMinutes * millisecondsPerMinute
       const piArgs = [...invocation.args, "--name", label]
 
-      if (ctx.model) piArgs.push("--model", model)
+      if (selectedModel) piArgs.push("--model", selectedModel)
       piArgs.push("--thinking", thinking, params.task)
 
       const task = await tasks.create({
