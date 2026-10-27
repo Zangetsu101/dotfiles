@@ -26,6 +26,12 @@ reversed. Pi's interactive abort may also restore already queued messages to the
 editor. It does not deliberately terminate the child session or its delegated
 background tasks.
 
+## Synchronous bash deadlines
+
+Bash calls default to 120 seconds. Supply a positive finite `timeout` in seconds for a known command that needs longer; Pi's existing maximum applies. For finite commands expected to take more than 60 seconds, prefer `background_monitor` so the agent remains available. Unknown runtimes start with bash.
+
+Bash errors receive conditional timeout guidance because Pi's `tool_result` hook does not expose reliable timeout provenance; command output alone is not proof of a timeout. On timeout, Pi requests process-tree cancellation and waits for the shell to exit. Cancellation errors are suppressed by Pi, and descendants can escape or survive; termination of the entire tree is not confirmed. If cancellation fails, Pi may continue waiting rather than return at the deadline. Captured output is retained when Pi returns a timeout. Partial filesystem and external side effects may remain; check for them before retrying, and do not automatically retry. `background_monitor` manages its own task lifetime and does not inherit the synchronous bash deadline.
+
 ## Focused mutation testing
 
 Paths are relative to `pi/agent`, even with `--prefix`:

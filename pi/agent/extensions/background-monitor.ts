@@ -258,7 +258,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     description: "Run a slow, finite shell command asynchronously in an inspectable tmux task. Wake the parent at the expected duration if still running, and on exit with status and bounded output.",
     promptSnippet: "Run slow, finite shell commands asynchronously in inspectable tmux tasks",
     promptGuidelines: [
-      "Use bash by default. Use background_monitor for finite commands expected to run longer than 60 seconds, based on prior runs or known workload. For unknown runtimes, start with bash.",
+      "Use bash by default; its timeout defaults to 120 seconds. Set a longer explicit timeout when needed, or use background_monitor for finite commands expected to run longer than 60 seconds. For unknown runtimes, start with bash. Timed-out commands may leave side effects; do not retry automatically.",
       ...backgroundLifecycleGuidelines,
       "Keep monitor output visible in its tmux pane; the tool already captures pane output. If you also need a separate log, use set -o pipefail; command 2>&1 | tee /path/to/log.",
     ],
