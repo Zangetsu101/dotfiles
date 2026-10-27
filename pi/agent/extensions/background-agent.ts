@@ -206,6 +206,11 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
     },
   })
   const mailbox = `${statusFile}.messages`
+  const operationFile = `${statusFile}.operation`
+  type Operation = { id: string; ctx: ExtensionContext; signal: AbortSignal | undefined }
+  let operation: Operation | undefined
+  let finishingOperation: Operation | undefined
+  let interrupted: { resolve: () => void } | undefined
   let processing = false
   let busy = false
   let closed = false
@@ -232,15 +237,50 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
         const id = name.slice(0, -8)
         const request = join(mailbox, name)
         const ack = join(mailbox, `${id}.ack`)
+        let accepted = false
+        let interruption = "unconfirmed"
+        let isForce = false
         try {
-          const message = await readFile(request, "utf8")
+          const raw = await readFile(request, "utf8")
+          const force = raw.startsWith("\u0000force:") ? JSON.parse(raw.slice(7)) as { message: string; operation: string | null } : undefined
+          const message = force?.message ?? raw
+          isForce = Boolean(force)
+          interruption = "not_needed"
+          if (force?.operation && operation?.id === force.operation) {
+            const targeted = operation
+            if (targeted.signal && targeted.ctx.signal === targeted.signal && !targeted.signal.aborted) {
+              try {
+                const settled = new Promise<void>((resolve) => { interrupted = { resolve } })
+                targeted.ctx.abort()
+                interruption = "requested"
+                await writeFile(join(mailbox, `${id}.interrupt`), interruption, { mode: 0o600 }).catch(() => undefined)
+                await settled
+                interruption = targeted.signal.aborted ? "confirmed" : "unconfirmed"
+              } catch {
+                interrupted = undefined
+                interruption = "failed"
+              }
+            } else if (targeted.signal?.aborted) {
+              interruption = "unconfirmed"
+              await new Promise<void>((resolve) => { interrupted = { resolve } })
+            } else {
+              interruption = "failed"
+            }
+          }
+          if (force && finishingOperation?.signal?.aborted && (!force.operation || finishingOperation.id === force.operation)) {
+            interruption = "unconfirmed"
+            await new Promise<void>((resolve) => { interrupted = { resolve } })
+          }
+          if (closed) return
           if (reported) await resetAssignment()
           pi.sendUserMessage(message, processing ? { deliverAs: "steer" } : undefined)
-          await writeFile(ack, "delivered", { flag: "wx", mode: 0o600 })
+          accepted = true
+          await writeFile(ack, force ? JSON.stringify({ status: "delivered", interruption }) : "delivered", { flag: "wx", mode: 0o600 })
         } catch (error) {
-          await writeFile(ack, `error: ${String(error)}`, { flag: "wx", mode: 0o600 }).catch(() => undefined)
+          const response = isForce ? JSON.stringify({ status: "error", interruption, error: String(error) }) : `error: ${String(error)}`
+          await writeFile(ack, response, { flag: "wx", mode: 0o600 }).catch(() => undefined)
         }
-        if (await readFile(ack, "utf8").catch(() => undefined)) await rm(request, { force: true })
+        if (accepted || (!isForce && await readFile(ack, "utf8").catch(() => undefined))) await rm(request, { force: true })
       }
     } finally { busy = false }
   }
@@ -251,9 +291,21 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
     timer = setInterval(() => { remindIfStale(); void receive().catch((error) => console.error("background agent mailbox:", error)) }, pollMs)
     await receive()
   })
-  pi.on("session_shutdown", () => { closed = true; if (timer) clearInterval(timer) })
-  pi.on("agent_start", () => { processing = true })
-  pi.on("agent_end", () => { processing = false })
+  pi.on("session_shutdown", async () => { closed = true; if (timer) clearInterval(timer); await rm(operationFile, { force: true }); interrupted?.resolve() })
+  pi.on("agent_start", async (_event, ctx) => {
+    processing = true
+    finishingOperation = undefined
+    operation = { id: randomUUID(), ctx, signal: ctx.signal }
+    const temporary = `${operationFile}.${operation.id}`
+    await writeFile(temporary, operation.id, { mode: 0o600 })
+    await rename(temporary, operationFile)
+  })
+  pi.on("agent_end", async () => {
+    processing = false
+    finishingOperation = operation
+    operation = undefined
+    await rm(operationFile, { force: true })
+  })
   const activeBackgroundActivities = new Set<string>()
   let reported = existsSync(statusFile)
   const resetAssignment = () => withMailboxLock(statusFile, async () => {
@@ -286,6 +338,9 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
   })
 
   pi.on("agent_settled", async (_event, ctx) => {
+    interrupted?.resolve()
+    interrupted = undefined
+    finishingOperation = undefined
     if (reported || activeBackgroundActivities.size > 0) return
     await receive()
     await withMailboxLock(statusFile, async () => {
@@ -561,11 +616,11 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     name: "background_agent_message",
     ...backgroundToolRenderers("background_agent_message"),
     label: "Message background agent",
-    description: "Send a message to a live background agent, including follow-up work after assignment completion. Steers its active turn or starts a new turn if idle; waits for delivery acknowledgement.",
+    description: "Send a message to a live background agent, including follow-up work after assignment completion. Steers its active turn or starts a new turn if idle; waits for delivery acknowledgement. With force, request cancellation of the targeted active operation before delivering recovery instructions. Cancellation cannot undo partial work and depends on the active tool honoring abort.",
     promptGuidelines: [
       "Use background_agent_message to steer an active assignment or send follow-up work to an idle agent in your task subtree. Wait for its delivery acknowledgement before treating the message as received.",
     ],
-    parameters: Type.Object({ id: Type.String(), message: Type.String() }),
+    parameters: Type.Object({ id: Type.String(), message: Type.String(), force: Type.Optional(Type.Boolean({ description: "Request cancellation of the active operation before delivering recovery instructions. Work already performed cannot be rolled back." })) }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       if (!family) await restoreFamily("startup", ctx)
       const agent = (await listAgents(tasks, tmux, family!.nodeId)).find((item) => item.id === params.id)
@@ -578,6 +633,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       const id = randomUUID()
       const request = join(mailbox, `${id}.request`)
       const ack = join(mailbox, `${id}.ack`)
+      const interruptFile = join(mailbox, `${id}.interrupt`)
       const acknowledged = async () => {
         const response = await readFile(ack, "utf8").catch((error: NodeJS.ErrnoException) => {
           if (error.code === "ENOENT") return undefined
@@ -585,12 +641,21 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         })
         if (!response) return undefined
         await rm(ack, { force: true })
-        return { content: [{ type: "text" as const, text: response }], details: { ...metadata, status: response === "delivered" ? "delivered" : "error" } }
+        if (params.force && response.startsWith("{")) {
+          const result = JSON.parse(response) as { status: string; interruption: string; error?: string }
+          await rm(interruptFile, { force: true })
+          return { content: [{ type: "text" as const, text: `Message ${result.status}; interruption ${result.interruption}.${result.error ? ` ${result.error}; message may still be pending.` : " Delivery means submitted to Pi, not acted on."}` }], details: { ...metadata, ...result } }
+        }
+        return { content: [{ type: "text" as const, text: response }], details: { ...metadata, status: response === "delivered" ? "delivered" : "error", ...(params.force ? { interruption: "unconfirmed" } : {}) } }
       }
       try {
         await mkdir(mailbox, { recursive: true, mode: 0o700 })
         const temporary = join(mailbox, `${id}.tmp`)
-        await writeFile(temporary, params.message, { mode: 0o600 })
+        const target = params.force ? await readFile(`${agent.statusFile}.operation`, "utf8").catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null
+          throw error
+        }) : null
+        await writeFile(temporary, params.force ? `\u0000force:${JSON.stringify({ message: params.message, operation: target })}` : params.message, { mode: 0o600 })
         const queued = await withMailboxLock(agent.statusFile, async () => {
           if (!await canReceive()) return false
           await rename(temporary, request)
@@ -612,7 +677,8 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
           }
           await new Promise((resolve) => setTimeout(resolve, pollMs))
         }
-        return { content: [{ type: "text" as const, text: "Acknowledgement timed out; delivery is unconfirmed and message may still be queued" }], details: { ...metadata, status: "error" } }
+        const interruption = params.force ? await readFile(interruptFile, "utf8").catch(() => "unconfirmed") : undefined
+        return { content: [{ type: "text" as const, text: `Acknowledgement timed out; delivery is unconfirmed and message may still be pending${interruption ? `; interruption ${interruption}` : ""}` }], details: { ...metadata, status: "error", ...(interruption ? { interruption } : {}) } }
       } catch (error) {
         return { content: [{ type: "text" as const, text: `${String(error)}; message may still be pending` }], details: { ...metadata, status: "error" } }
       }
