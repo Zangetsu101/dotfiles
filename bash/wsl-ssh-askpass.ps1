@@ -4,6 +4,46 @@ param(
 
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class SshAskpassForeground
+{
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")]
+    private static extern bool AttachThreadInput(uint thread, uint otherThread, bool attach);
+
+    public static void Activate(IntPtr window)
+    {
+        if (SetForegroundWindow(window)) return;
+
+        uint processId;
+        uint foregroundThread = GetWindowThreadProcessId(GetForegroundWindow(), out processId);
+        uint currentThread = GetCurrentThreadId();
+        if (foregroundThread == 0 || foregroundThread == currentThread) return;
+
+        // WSL launches can lack foreground permission even when WPF reports IsActive.
+        bool attached = AttachThreadInput(currentThread, foregroundThread, true);
+        if (!attached) return;
+        try
+        {
+            SetForegroundWindow(window);
+        }
+        finally
+        {
+            AttachThreadInput(currentThread, foregroundThread, false);
+        }
+    }
+}
+'@
 
 $window = New-Object System.Windows.Window
 $window.Title = "SSH authentication"
@@ -69,7 +109,11 @@ $ok.Add_Click({ $window.DialogResult = $true })
 
 [void]$panel.Children.Add($buttons)
 $window.Content = $panel
-$window.Add_ContentRendered({ [void]$password.Focus() })
+$window.Add_ContentRendered({
+    $handle = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
+    [SshAskpassForeground]::Activate($handle)
+    [void]$password.Focus()
+})
 
 if ($window.ShowDialog() -ne $true) {
     exit 1
