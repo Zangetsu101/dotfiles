@@ -8,3 +8,5 @@ Return one evidence packet containing:
 - a direct citation to the primary source that supports it;
 - any qualification or material uncertainty; and
 - any unresolved question.
+
+Complete the lane when the lead can retrieve the full evidence packet through the available tools.
