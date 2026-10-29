@@ -1,28 +1,21 @@
 ---
 name: research
 source: https://github.com/mattpocock/skills/tree/main/skills/engineering/research
-description: Investigate a question against high-trust primary sources and capture the findings as a Markdown file in the repo. Use when the user wants a topic researched, docs or API facts gathered, or reading legwork delegated to a background agent.
+description: Research questions using primary sources and save a Markdown report. Use when the user wants a topic investigated or documentation and API facts gathered.
 ---
 
 # Research
 
-## Terms
+Delegate the request to a background agent, passing it the research instructions below.
 
-- **Research request:** the user's full question and requested deliverable.
-- **Research lead:** the agent that owns a research request and its research report.
-- **Research lane:** a bounded investigation delegated by a research lead.
-- **Lane researcher:** the agent assigned one research lane.
-- **Evidence packet:** a lane researcher's findings, citations, qualifications, and unresolved questions.
-- **Research report:** the single repository artifact produced for a research request.
+## Research instructions
 
-## Route
+You own the investigation and final report. Delegate bounded questions only if useful, giving each researcher its specific questions and evidence requirements. Retain synthesis and delivery.
 
-Choose one route:
+1. Establish the scope and expected deliverable from the request and relevant repository context.
+2. Investigate primary sources: official documentation, source code, specifications, and first-party APIs. Trace claims to the source that owns them.
+3. Verify consequential claims, reconcile conflicting evidence where possible, and record material uncertainty.
+4. Write one Markdown report answering the request. Cite supporting sources and distinguish evidence from conclusions.
+5. Save the report using the repository's research conventions. If none exist, choose a sensible location. Return the report's path.
 
-- For a research request from the user, delegate the complete request to one background agent. Instruct it to read and follow [LEAD.md](LEAD.md).
-- For a complete research request delegated by another agent, read and follow [LEAD.md](LEAD.md) in the current session.
-- For an explicitly assigned research lane, read and follow [LANE.md](LANE.md) in the current session.
-
-## Evidence
-
-Use primary sources: official documentation, source code, specifications, and first-party APIs. Follow each claim to the source that owns it and cite that source directly. State material uncertainty instead of filling gaps with inference.
+Research is complete when every requested question is answered or explicitly unresolved, with supporting evidence and material limitations recorded.
