@@ -30,6 +30,19 @@ function updateUI(ctx: ExtensionContext, tasks: BackgroundTask[], nodeId: string
   ctx.ui.setStatus(`${STATUS_KEY}-progress`, lines.length ? lines.join("\n") : undefined)
 }
 
+const isSameRun = (cached: BackgroundTask, task: BackgroundTask) =>
+  cached.status === "running" && task.status === "running" && task.startedAt !== undefined
+  && cached.startedAt === task.startedAt && cached.statusFile === task.statusFile
+
+/** Metadata carries no progress, so keep progress already read for the same run until the next read. */
+function carryProgress(cached: BackgroundTask[], visible: BackgroundTask[]): BackgroundTask[] {
+  const previous = new Map(cached.map((task) => [task.id, task]))
+  return visible.map((task) => {
+    const prior = previous.get(task.id)
+    return !task.progress && prior && isSameRun(prior, task) ? { ...task, progress: prior.progress } : task
+  })
+}
+
 export function formatRunningTasks(tasks: BackgroundTask[], nodeId?: string, now = Date.now()): string | undefined {
   const running = tasks.filter((task) => task.status === "running" && task.id !== nodeId)
   const reported = running.filter((task) => task.kind === "agent" && task.progress)
@@ -110,8 +123,8 @@ export default function (pi: ExtensionAPI, options: { tasks?: BackgroundTasks; o
     ageTimer = setInterval(() => { if (active()) updateUI(ctx, cachedTasks, family.nodeId) }, 5000)
     const stop = await tasks.watchMetadata({ subtreeRootId: family.nodeId }, (visible) => {
       if (active()) {
-        visibleTasks = visible
-        cachedTasks = visible
+        visibleTasks = carryProgress(cachedTasks, visible)
+        cachedTasks = visibleTasks
         updateUI(ctx, cachedTasks, family.nodeId)
         refreshProgress()
       }

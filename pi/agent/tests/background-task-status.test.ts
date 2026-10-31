@@ -305,6 +305,42 @@ test("progress subscriptions follow running agents and are released on tree rest
   assert.deepEqual(runtime.stopped, ["/ui-progress/first", "/ui-progress/second", "/ui-progress/first", "/ui-progress/second"])
 })
 
+test("metadata refresh keeps loaded progress only for the same running agent run", async (t) => {
+  for (const [change, refreshed, kept] of [
+    ["same run", (agent: BackgroundTask) => agent, true],
+    ["restarted run", (agent: BackgroundTask) => ({ ...agent, startedAt: 2 }), false],
+    ["run without a start time", (agent: BackgroundTask) => ({ ...agent, startedAt: undefined }), false],
+    ["moved status file", (agent: BackgroundTask) => ({ ...agent, statusFile: "/ui-progress/first/other" }), false],
+  ] as const) {
+    await t.test(change, async (t) => {
+      const runtime = progressRuntime(t)
+      const agent = { ...runtime.agent("first"), startedAt: 1 }
+      await runtime.event("session_start")
+      runtime.notify([agent])
+      await flushProgress()
+      runtime.reads.shift()!("Reading tests")
+      await flushProgress()
+      const before = runtime.statuses.length
+      runtime.notify([refreshed(agent)])
+      assert.equal(runtime.statuses.length, before + 1)
+      assert.equal(runtime.statuses.at(-1), kept ? "1 agent · Reading tests · updated <1m ago" : "1 agent · agent · awaiting progress")
+    })
+  }
+})
+
+test("progress from a finished agent is not shown when it runs again", async (t) => {
+  const runtime = progressRuntime(t)
+  const agent = { ...runtime.agent("first"), startedAt: 1 }
+  await runtime.event("session_start")
+  runtime.notify([agent])
+  await flushProgress()
+  runtime.reads.shift()!("Old assignment")
+  await flushProgress()
+  runtime.notify([{ ...agent, status: "succeeded" }])
+  runtime.notify([agent])
+  assert.equal(runtime.statuses.at(-1), "1 agent · agent · awaiting progress")
+})
+
 test("events during a progress read drain the latest report without duplicate subscriptions", async (t) => {
   const runtime = progressRuntime(t)
   await runtime.event("session_start")
