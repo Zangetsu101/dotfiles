@@ -531,14 +531,21 @@ export class BackgroundTasks {
       if (branch.some((task) => task.status === "running")) continue
 
       for (const task of branch.reverse()) {
+        let targetClosed = false
         try {
+          // Publish intent before the window disappears: completion watchers may
+          // reconcile while tmux deletion and metadata invalidation are in flight.
+          await writeFile(`${task.statusFile}.cleanup`, "", { mode: 0o600 })
           if (!this.retained.has(task.id) || await this.isPresent(task)) await this.tmux.run([task.kind === "monitor" ? "kill-pane" : "kill-window", "-t", task.target])
+          targetClosed = true
           this.known.delete(task.id)
           this.retained.delete(task.id)
           await this.invalidateMetadata()
           if (task.kind === "monitor" && task.familyId) await this.releasePool(task, task.familyId)
           removed++
-        } catch {}
+        } catch {
+          if (!targetClosed) await rm(`${task.statusFile}.cleanup`, { force: true })
+        }
       }
     }
 

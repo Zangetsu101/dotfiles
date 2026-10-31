@@ -559,6 +559,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         }
         let completion = await tasks.completion(agent)
         if (completion && "kind" in completion && completion.kind !== "exit" && !await tasks.isPresent(agent)) {
+          if (existsSync(`${agent.statusFile}.cleanup`)) return
           completion = { kind: "exit", reason: "agent session disappeared after reporting assignment completion" }
           await writeTaskCompletion(agent.statusFile, completion)
         }
@@ -606,7 +607,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         })
       }
 
-      if (!completion) return
+      if (!completion || existsSync(`${agent.statusFile}.cleanup`)) return
 
       const agentCompletion = "kind" in completion
       const currentCompletion = await tasks.completion(agent)
