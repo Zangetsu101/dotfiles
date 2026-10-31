@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { basename, dirname, join } from "node:path"
-import { mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
+import { dirname, join } from "node:path"
+import { link, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { promisify } from "node:util"
-import { existsSync, watch, type FSWatcher } from "node:fs"
+import { existsSync } from "node:fs"
+import { sharedDirectoryObservation } from "./lib/directory-observation.ts"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 import {
@@ -41,8 +42,6 @@ const ALLOW_DELEGATION_ENV = "PI_BACKGROUND_AGENT_ALLOW_DELEGATION"
 const AGENT_LABEL_ENV = "PI_BACKGROUND_AGENT_LABEL"
 const DEFAULT_MAX_AGENT_DEPTH = 3
 const MAX_RESULT_CHARS = 50_000
-const POLL_MS = 100
-const SETTLED_POLL_MS = 2_000
 const STALE_REPORT_MS = 5 * 60_000
 
 type AgentSession = {
@@ -160,7 +159,20 @@ async function withMailboxLock<T>(statusFile: string, operation: () => Promise<T
   try { return await operation() } finally { await rm(lock, { recursive: true, force: true }) }
 }
 
-async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: TmuxProcessAdapter, pollMs: number, now: () => number): Promise<void> {
+async function publishMailboxResponse(path: string, response: string, exclusive = false): Promise<void> {
+  if (exclusive && existsSync(path)) throw Object.assign(new Error(`Response already exists: ${path}`), { code: "EEXIST" })
+  const temporary = `${path}.${randomUUID()}.tmp`
+  try {
+    await writeFile(temporary, response, { flag: "wx", mode: 0o600 })
+    // A hard link publishes a complete response without replacing an existing ack.
+    if (exclusive) await link(temporary, path)
+    else await rename(temporary, path)
+  } finally {
+    await rm(temporary, { force: true })
+  }
+}
+
+async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: TmuxProcessAdapter, now: () => number): Promise<void> {
   const pane = process.env.TMUX_PANE
   const setWindowOption = async (key: string, value: string) => {
     if (pane) await tmux.run(["set-option", "-w", "-t", pane, key, value]).catch(() => undefined)
@@ -202,6 +214,7 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
       hasReport = true
       latestReport = progress.latest
       reminded = false
+      scheduleReminder()
       return { content: [{ type: "text", text: "Progress recorded" }], details: { progress } }
     },
   })
@@ -214,11 +227,21 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
   let processing = false
   let busy = false
   let closed = false
-  let timer: NodeJS.Timeout | undefined
+  let reminderTimer: NodeJS.Timeout | undefined
+  let stopMailbox: (() => void) | undefined
+  let mailboxGeneration = 0
+  let dirty = false
+  const scheduleReminder = () => {
+    if (reminderTimer) clearTimeout(reminderTimer)
+    reminderTimer = undefined
+    if (closed || !processing || reported || reminded || !latestReport) return
+    if (latestReport.state === "blocked" && latestReport.help?.trim()) return
+    reminderTimer = setTimeout(remindIfStale, Math.max(0, latestReport.at + STALE_REPORT_MS - now()))
+  }
   const remindIfStale = () => {
     if (closed || !processing || reported || reminded || !latestReport) return
     if (latestReport.state === "blocked" && latestReport.help?.trim()) return
-    if (now() - latestReport.at < STALE_REPORT_MS) return
+    if (now() - latestReport.at < STALE_REPORT_MS) { scheduleReminder(); return }
     pi.sendMessage({
       customType: "background-agent-report-reminder",
       content: "Your last progress report is at least 5 minutes old. Call background_agent_report with your current activity or blocker.",
@@ -226,74 +249,105 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
     }, { deliverAs: "steer", triggerTurn: false })
     reminded = true
   }
-  const receive = async () => {
-    if (busy || closed) return
-    busy = true
-    try {
-      for (const name of (await readdir(mailbox).catch((error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT") return [] as string[]
-        throw error
-      })).filter((name) => name.endsWith(".request"))) {
-        const id = name.slice(0, -8)
-        const request = join(mailbox, name)
-        const ack = join(mailbox, `${id}.ack`)
-        let accepted = false
-        let interruption = "unconfirmed"
-        let isForce = false
-        try {
-          const raw = await readFile(request, "utf8")
-          const force = raw.startsWith("\u0000force:") ? JSON.parse(raw.slice(7)) as { message: string; operation: string | null } : undefined
-          const message = force?.message ?? raw
-          isForce = Boolean(force)
-          interruption = "not_needed"
-          if (force?.operation && operation?.id === force.operation) {
-            const targeted = operation
-            if (targeted.signal && targeted.ctx.signal === targeted.signal && !targeted.signal.aborted) {
-              try {
-                const settled = new Promise<void>((resolve) => { interrupted = { resolve } })
-                targeted.ctx.abort()
-                interruption = "requested"
-                await writeFile(join(mailbox, `${id}.interrupt`), interruption, { mode: 0o600 }).catch(() => undefined)
-                await settled
-                interruption = targeted.signal.aborted ? "confirmed" : "unconfirmed"
-              } catch {
-                interrupted = undefined
-                interruption = "failed"
-              }
-            } else if (targeted.signal?.aborted) {
-              interruption = "unconfirmed"
-              await new Promise<void>((resolve) => { interrupted = { resolve } })
-            } else {
+  const drainMailbox = async (receiving: number) => {
+    for (const name of (await readdir(mailbox).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return [] as string[]
+      throw error
+    })).filter((name) => name.endsWith(".request"))) {
+      if (closed || receiving !== mailboxGeneration) return
+      const id = name.slice(0, -8)
+      const request = join(mailbox, name)
+      const ack = join(mailbox, `${id}.ack`)
+      let accepted = false
+      let interruption = "unconfirmed"
+      let isForce = false
+      try {
+        const raw = await readFile(request, "utf8")
+        const force = raw.startsWith("\u0000force:") ? JSON.parse(raw.slice(7)) as { message: string; operation: string | null } : undefined
+        const message = force?.message ?? raw
+        isForce = Boolean(force)
+        interruption = "not_needed"
+        if (force?.operation && operation?.id === force.operation) {
+          const targeted = operation
+          if (targeted.signal && targeted.ctx.signal === targeted.signal && !targeted.signal.aborted) {
+            try {
+              const settled = new Promise<void>((resolve) => { interrupted = { resolve } })
+              targeted.ctx.abort()
+              interruption = "requested"
+              await publishMailboxResponse(join(mailbox, `${id}.interrupt`), interruption).catch(() => undefined)
+              await settled
+              interruption = targeted.signal.aborted ? "confirmed" : "unconfirmed"
+            } catch {
+              interrupted = undefined
               interruption = "failed"
             }
-          }
-          if (force && finishingOperation?.signal?.aborted && (!force.operation || finishingOperation.id === force.operation)) {
+          } else if (targeted.signal?.aborted) {
             interruption = "unconfirmed"
-            await new Promise<void>((resolve) => { interrupted = { resolve } })
+            const settled = new Promise<void>((resolve) => { interrupted = { resolve } })
+            await publishMailboxResponse(join(mailbox, `${id}.interrupt`), interruption).catch(() => undefined)
+            await settled
+          } else {
+            interruption = "failed"
           }
-          if (closed) return
-          if (reported) await resetAssignment()
-          pi.sendUserMessage(message, processing ? { deliverAs: "steer" } : undefined)
-          accepted = true
-          await writeFile(ack, force ? JSON.stringify({ status: "delivered", interruption }) : "delivered", { flag: "wx", mode: 0o600 })
-        } catch (error) {
-          const response = isForce ? JSON.stringify({ status: "error", interruption, error: String(error) }) : `error: ${String(error)}`
-          await writeFile(ack, response, { flag: "wx", mode: 0o600 }).catch(() => undefined)
         }
-        if (accepted || (!isForce && await readFile(ack, "utf8").catch(() => undefined))) await rm(request, { force: true })
+        if (force && finishingOperation?.signal?.aborted && (!force.operation || finishingOperation.id === force.operation)) {
+          interruption = "unconfirmed"
+          await new Promise<void>((resolve) => { interrupted = { resolve } })
+        }
+        if (closed || receiving !== mailboxGeneration) return
+        if (reported) await resetAssignment()
+        if (closed || receiving !== mailboxGeneration) return
+        pi.sendUserMessage(message, processing ? { deliverAs: "steer" } : undefined)
+        accepted = true
+        await publishMailboxResponse(ack, force ? JSON.stringify({ status: "delivered", interruption }) : "delivered", true)
+      } catch (error) {
+        const response = isForce ? JSON.stringify({ status: "error", interruption, error: String(error) }) : `error: ${String(error)}`
+        await publishMailboxResponse(ack, response, true).catch(() => undefined)
       }
-    } finally { busy = false }
+      if (accepted || (!isForce && await readFile(ack, "utf8").catch(() => undefined))) await rm(request, { force: true })
+    }
+  }
+  const receive = async () => {
+    if (closed) return
+    dirty = true
+    if (busy) return
+    busy = true
+    const receiving = mailboxGeneration
+    try {
+      do {
+        dirty = false
+        await drainMailbox(receiving)
+      } while (dirty && !closed && receiving === mailboxGeneration)
+    } finally {
+      busy = false
+      if (dirty && !closed && receiving !== mailboxGeneration) void receive().catch((error) => console.error("background agent mailbox:", error))
+    }
   }
   pi.on("session_start", async () => {
+    const starting = ++mailboxGeneration
+    stopMailbox?.()
     await mkdir(mailbox, { recursive: true, mode: 0o700 })
+    if (starting !== mailboxGeneration) return
     closed = false
-    if (timer) clearInterval(timer)
-    timer = setInterval(() => { remindIfStale(); void receive().catch((error) => console.error("background agent mailbox:", error)) }, pollMs)
+    const stop = await sharedDirectoryObservation.watch(mailbox, () => {
+      if (!closed && starting === mailboxGeneration) void receive().catch((error) => console.error("background agent mailbox:", error))
+    })
+    if (closed || starting !== mailboxGeneration) { stop(); return }
+    stopMailbox = stop
     await receive()
   })
-  pi.on("session_shutdown", async () => { closed = true; if (timer) clearInterval(timer); await rm(operationFile, { force: true }); interrupted?.resolve() })
+  pi.on("session_shutdown", async () => {
+    closed = true
+    ++mailboxGeneration
+    stopMailbox?.()
+    stopMailbox = undefined
+    if (reminderTimer) clearTimeout(reminderTimer)
+    await rm(operationFile, { force: true })
+    interrupted?.resolve()
+  })
   pi.on("agent_start", async (_event, ctx) => {
     processing = true
+    scheduleReminder()
     finishingOperation = undefined
     operation = { id: randomUUID(), ctx, signal: ctx.signal }
     const temporary = `${operationFile}.${operation.id}`
@@ -302,6 +356,7 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
   })
   pi.on("agent_end", async () => {
     processing = false
+    scheduleReminder()
     finishingOperation = operation
     operation = undefined
     await rm(operationFile, { force: true })
@@ -375,24 +430,23 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   const millisecondsPerMinute = options.millisecondsPerMinute ?? 60_000
   const checkIns = options.checkIns ?? taskCheckIns(pi.events)
   const now = options.now ?? Date.now
-  const pollMs = options.pollMs ?? POLL_MS
-  const settledPollMs = options.settledPollMs ?? SETTLED_POLL_MS
   const childStatusFile = process.env[STATUS_FILE_ENV]
   const parsedDepth = Number.parseInt(process.env[DEPTH_ENV] ?? "", 10)
   const depth = childStatusFile ? (Number.isFinite(parsedDepth) ? parsedDepth : 1) : 0
   const configuredMaxDepth = Number.parseInt(process.env[MAX_DEPTH_ENV] ?? "", 10)
   const maxDepth = Number.isFinite(configuredMaxDepth) ? configuredMaxDepth : DEFAULT_MAX_AGENT_DEPTH
-  if (childStatusFile) await registerChildBridge(pi, childStatusFile, tmux, pollMs, now)
+  if (childStatusFile) await registerChildBridge(pi, childStatusFile, tmux, now)
 
-  const watchers = new Map<string, FSWatcher>()
-  const reconciliationTimers = new Map<string, NodeJS.Timeout>()
+  const watchers = new Map<string, () => void>()
+  const reconciliations = new Map<string, () => void>()
   let agentsCache: AgentSession[] = []
   let family: TaskFamily | undefined
   let shuttingDown = false
+  const messageWaiters = new Set<() => void>()
 
-  const availabilityWatchers = new Map<string, FSWatcher>()
+  const availabilityWatchers = new Map<string, () => void>()
   const stopAvailabilityWatchers = () => {
-    for (const watcher of availabilityWatchers.values()) watcher.close()
+    for (const stop of availabilityWatchers.values()) stop()
     availabilityWatchers.clear()
   }
   let stopMetadata: (() => void) | undefined
@@ -403,18 +457,17 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     const descendants = visible.filter((task) => task.kind === "agent" && task.id !== family?.nodeId)
     const ids = new Set(descendants.map((agent) => agent.id))
     for (const [id, watcher] of availabilityWatchers) {
-      if (!ids.has(id)) { watcher.close(); availabilityWatchers.delete(id) }
+      if (!ids.has(id)) { watcher(); availabilityWatchers.delete(id) }
     }
     for (const agent of descendants) {
       if (availabilityWatchers.has(agent.id)) continue
-      try {
-        const watcher = watch(dirname(agent.statusFile), (_event, filename) => {
-          if (!filename || filename.toString() === basename(agent.statusFile)) refreshAvailability()
-        })
-        availabilityWatchers.set(agent.id, watcher)
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-      }
+      // Reserve before attaching: the observer invokes the initial listener.
+      const current = generation
+      const reservation = () => {}
+      availabilityWatchers.set(agent.id, reservation)
+      const stop = await sharedDirectoryObservation.watch(dirname(agent.statusFile), refreshAvailability)
+      if (shuttingDown || current !== generation || availabilityWatchers.get(agent.id) !== reservation) { stop(); continue }
+      availabilityWatchers.set(agent.id, stop)
     }
     const messageable = await Promise.all(descendants.map((agent) => canMessageBackgroundAgent(tasks, agent)))
     if (shuttingDown || revision !== availabilityRevision) return
@@ -432,7 +485,9 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
 
   const restoreFamily = async (reason: string, ctx: ExtensionContext) => {
     const restoring = ++generation
+    for (const wake of messageWaiters) wake()
     const revision = ++availabilityRevision
+    stopAllMonitoring()
     stopAvailabilityWatchers()
     stopMetadata?.()
     stopMetadata = undefined
@@ -444,7 +499,18 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     if (shuttingDown || restoring !== generation) return false
     let pendingAvailability = Promise.resolve()
     const stop = await tasks.watchMetadata({ subtreeRootId: family.nodeId }, (snapshot) => {
-      if (restoring === generation && !shuttingDown) pendingAvailability = updateAvailability(snapshot).catch((error) => console.error("background agent availability:", error))
+      if (restoring !== generation || shuttingDown) return
+      const direct = snapshot.filter((task) => task.kind === "agent" && task.parentId === family!.nodeId)
+      for (const task of direct) {
+        if (!agentsCache.some((agent) => agent.id === task.id)) {
+          const agent = { ...task, kind: "agent" as const, model: "", thinking: "", expectedCompletionAt: 0 }
+          agentsCache.push(agent)
+          monitor(agent)
+        }
+      }
+      // Missing runtimes still need reconciliation: durable completions own delivery.
+      for (const reconcile of reconciliations.values()) reconcile()
+      pendingAvailability = updateAvailability(snapshot).catch((error) => console.error("background agent availability:", error))
     })
     await pendingAvailability
     if (shuttingDown || restoring !== generation) { stop(); return false }
@@ -455,11 +521,9 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   const stopMonitoring = (id: string) => {
     const agent = agentsCache.find((item) => item.id === id)
     if (agent) checkIns.stop(agent.statusFile)
-    watchers.get(id)?.close()
+    watchers.get(id)?.()
     watchers.delete(id)
-    const timer = reconciliationTimers.get(id)
-    if (timer) clearInterval(timer)
-    reconciliationTimers.delete(id)
+    reconciliations.delete(id)
   }
 
   const stopAllMonitoring = () => {
@@ -479,20 +543,18 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     let consuming = false
     let checkingSettled = false
     let runtimeExit = false
-    let watcher: FSWatcher
-    const reconcile = (operation: () => Promise<void>) => { void operation().catch((error) => console.error("background agent reconciliation:", error)) }
-    const setPoll = (callback: () => void, interval: number) => {
-      if (shuttingDown || watchers.get(agent.id) !== watcher) return
-      const previous = reconciliationTimers.get(agent.id)
-      if (previous) clearInterval(previous)
-      reconciliationTimers.set(agent.id, setInterval(callback, interval))
-    }
+    const subscriptions: Array<() => void> = []
+    const watcher = () => { for (const stop of subscriptions) stop() }
+    watchers.set(agent.id, watcher)
+    const current = generation
+    const active = () => !shuttingDown && current === generation && watchers.get(agent.id) === watcher
+    const reconcile = (operation: () => Promise<void>) => { if (active()) void operation().catch((error) => console.error("background agent reconciliation:", error)) }
     const checkSettled = async () => {
       if (!settled || shuttingDown || checkingSettled) return
       checkingSettled = true
       try {
         if (await tasks.pendingAssignmentCompletionPath(agent)) {
-          await consume(true)
+          await consumeCompletion()
           return
         }
         let completion = await tasks.completion(agent)
@@ -505,7 +567,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
           if ("kind" in completion && completion.kind === "exit" && !runtimeExit) {
             runtimeExit = true
             settled = false
-            await consume()
+            await consumeCompletion()
             settled = true
           }
           return
@@ -513,25 +575,28 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         settled = false
         agent.status = "running"
         await tasks.setStatus(agent, "running")
-        await checkIns.watch(agent.statusFile, () => notifyRunningTask(pi, tasks, agent, () => !settled && !shuttingDown))
+        if (!active()) return
+        await checkIns.watch(agent.statusFile, () => notifyRunningTask(pi, tasks, agent, () => !settled && active()))
+        if (!active()) return
         pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
-        setPoll(() => reconcile(consume), pollMs)
-        reconcile(consume)
+        await consumeCompletion()
       } finally {
         checkingSettled = false
       }
     }
-    void checkIns.watch(agent.statusFile, () => notifyRunningTask(pi, tasks, agent, () => !settled && !shuttingDown))
+    void checkIns.watch(agent.statusFile, () => notifyRunningTask(pi, tasks, agent, () => !settled && active()))
     const consumeCompletion = async () => {
       const completion = await tasks.claimCompletionOrReconcile(agent)
       if (watchers.get(agent.id) !== watcher) return
       const progress = completion ? undefined : await readAgentProgress(agent.statusFile).catch((error) => { console.error("background agent progress:", error); return undefined })
-      if (progress?.latest.state === "blocked" && progress.latest.attention && !await tasks.completion(agent)) {
+      if (progress?.latest.state === "blocked" && progress.latest.attention && !await tasks.completion(agent)
+        && await readFile(`${agent.statusFile}.attention`, "utf8").catch(() => undefined) !== progress.latest.id) {
         await withMailboxLock(agent.statusFile, async () => {
           const marker = `${agent.statusFile}.attention`
           if (await readFile(marker, "utf8").catch(() => undefined) === progress.latest.id) return
           if (shuttingDown || watchers.get(agent.id) !== watcher || await tasks.completion(agent)) return
           await writeFile(marker, progress.latest.id, { mode: 0o600 })
+          if (!active()) return
           pi.sendMessage({
             customType: "background-agent-check-in",
             details: { id: agent.id, label: agent.label, target: agent.target, status: "blocked", progress, summary: describeAgentProgress(progress), attach: backgroundAttachCommand(agent) },
@@ -545,6 +610,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
 
       const agentCompletion = "kind" in completion
       const currentCompletion = await tasks.completion(agent)
+      if (!active()) return
       settled = !agentCompletion || !completion.assignment || Boolean(currentCompletion && "kind" in currentCompletion && currentCompletion.assignment === completion.assignment)
       runtimeExit = agentCompletion && completion.kind === "exit"
       if (settled) {
@@ -584,22 +650,32 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         },
         { deliverAs: "steer", triggerTurn: true },
       )
-      setPoll(() => reconcile(consume), settled ? settledPollMs : pollMs)
     }
-    const consume = async (includeSettled = false) => {
-      if (settled && !includeSettled) return checkSettled()
-      if (consuming || shuttingDown) return
+    let dirty = false
+    const consume = async () => {
+      if (!active()) return
+      dirty = true
+      if (consuming) return
       consuming = true
-      try { await consumeCompletion() } finally { consuming = false }
+      try {
+        do {
+          dirty = false
+          if (settled) await checkSettled()
+          else await consumeCompletion()
+        } while (dirty && active())
+      } finally { consuming = false }
     }
-
-    watcher = watch(dirname(agent.statusFile), (_event, filename) => {
-      const changed = filename?.toString()
-      if (!changed || changed === basename(agent.statusFile) || changed === `${basename(agent.statusFile)}.progress`) reconcile(consume)
-    })
-    watchers.set(agent.id, watcher)
-    setPoll(() => reconcile(consume), settled ? settledPollMs : pollMs)
-    reconcile(consume)
+    const refresh = () => reconcile(consume)
+    reconciliations.set(agent.id, refresh)
+    // Assignment records publish after status and survive follow-up reset.
+    void (async () => {
+      for (const directory of [dirname(agent.statusFile), `${agent.statusFile}.assignments`]) {
+        const stop = await sharedDirectoryObservation.watch(directory, refresh)
+        if (!active()) { stop(); return }
+        subscriptions.push(stop)
+      }
+    })().catch((error) => console.error("background agent observation:", error))
+    refresh()
   }
 
   pi.on("session_start", async (event, ctx) => {
@@ -648,8 +724,20 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         }
         return { content: [{ type: "text" as const, text: response }], details: { ...metadata, status: response === "delivered" ? "delivered" : "error", ...(params.force ? { interruption: "unconfirmed" } : {}) } }
       }
+      const sending = generation
+      const stops: Array<() => void> = []
+      let wake: (() => void) | undefined
+      let changed = true
+      let timedOut = false
+      let deadline: NodeJS.Timeout | undefined
+      const invalidate = () => { changed = true; wake?.(); wake = undefined }
+      messageWaiters.add(invalidate)
       try {
         await mkdir(mailbox, { recursive: true, mode: 0o700 })
+        stops.push(await sharedDirectoryObservation.watch(mailbox, invalidate))
+        stops.push(await sharedDirectoryObservation.watch(dirname(agent.statusFile), invalidate))
+        stops.push(await tasks.watchMetadata({ subtreeRootId: family!.nodeId }, invalidate))
+        deadline = setTimeout(() => { timedOut = true; invalidate() }, (options.pollMs ?? 100) * 100)
         const temporary = join(mailbox, `${id}.tmp`)
         const target = params.force ? await readFile(`${agent.statusFile}.operation`, "utf8").catch((error: NodeJS.ErrnoException) => {
           if (error.code === "ENOENT") return null
@@ -657,7 +745,8 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         }) : null
         await writeFile(temporary, params.force ? `\u0000force:${JSON.stringify({ message: params.message, operation: target })}` : params.message, { mode: 0o600 })
         const queued = await withMailboxLock(agent.statusFile, async () => {
-          if (!await canReceive()) return false
+          if (shuttingDown || sending !== generation || !await canReceive()) return false
+          if (shuttingDown || sending !== generation) return false
           await rename(temporary, request)
           return true
         })
@@ -665,7 +754,8 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
           await rm(temporary, { force: true })
           return { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { ...metadata, status: "not_running" } }
         }
-        for (let attempt = 0; attempt < 100; attempt++) {
+        while (!timedOut && !shuttingDown && sending === generation) {
+          changed = false
           const response = await acknowledged()
           if (response) return response
           const current = (await listAgents(tasks, tmux, family!.nodeId)).find((item) => item.id === agent.id)
@@ -675,12 +765,16 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
             await rm(request, { force: true })
             return { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { ...metadata, status: "not_running" } }
           }
-          await new Promise((resolve) => setTimeout(resolve, pollMs))
+          if (!changed && !timedOut) await new Promise<void>((resolve) => { wake = resolve })
         }
         const interruption = params.force ? await readFile(interruptFile, "utf8").catch(() => "unconfirmed") : undefined
         return { content: [{ type: "text" as const, text: `Acknowledgement timed out; delivery is unconfirmed and message may still be pending${interruption ? `; interruption ${interruption}` : ""}` }], details: { ...metadata, status: "error", ...(interruption ? { interruption } : {}) } }
       } catch (error) {
         return { content: [{ type: "text" as const, text: `${String(error)}; message may still be pending` }], details: { ...metadata, status: "error" } }
+      } finally {
+        messageWaiters.delete(invalidate)
+        if (deadline) clearTimeout(deadline)
+        for (const stop of stops) stop()
       }
     },
   })
@@ -752,6 +846,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
 
   pi.on("session_shutdown", () => {
     shuttingDown = true
+    for (const wake of messageWaiters) wake()
     ++generation
     ++availabilityRevision
     stopAvailabilityWatchers()

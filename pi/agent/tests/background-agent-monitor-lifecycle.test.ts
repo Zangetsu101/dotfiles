@@ -59,7 +59,7 @@ for (const outcome of ["settled", "exit"] as const) test(outcome === "settled"
       settledPollMs: 20,
     })
     await emit("session_start")
-    await waitFor(() => claims >= 2)
+    await waitFor(() => claims >= 1)
     completed = true
     await writeFile(agent.statusFile, JSON.stringify(completion))
     await waitFor(() => messages.length === 1)
@@ -83,7 +83,7 @@ for (const outcome of ["settled", "exit"] as const) test(outcome === "settled"
       claimed = false
       await rm(agent.statusFile)
       const beforeRestart = claims
-      await waitFor(() => claims > beforeRestart + 1)
+      await waitFor(() => claims > beforeRestart)
       completed = true
       await writeFile(agent.statusFile, JSON.stringify(completion))
       await waitFor(() => messages.length === 2)

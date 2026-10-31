@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { EventEmitter } from "node:events"
-import { mkdtemp, rm } from "node:fs/promises"
+import fs, { mkdtemp, rm } from "node:fs/promises"
+import { syncBuiltinESMExports } from "node:module"
+import type { TestContext } from "node:test"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { reportAgentProgress } from "../extensions/lib/background-progress.ts"
@@ -158,6 +160,7 @@ test("progress status reads progress files and excludes the caller and finished 
   let refreshed!: () => void
   const ready = new Promise<void>((resolve) => { refreshed = resolve })
   let lines: string[] = []
+  let expectedActivity = "Checking 界 tests"
   const ctx = {
     hasUI: true, cwd: "/repo",
     sessionManager: { getSessionId: () => "progress-runtime", getBranch: () => [] },
@@ -165,7 +168,7 @@ test("progress status reads progress files and excludes the caller and finished 
       setStatus: (key: string, value: string | undefined) => {
         if (key !== "background-tasks-progress") return
         lines = value?.split("\n") ?? []
-        if (lines.some((line) => line.includes("Checking 界 tests"))) refreshed()
+        if (lines.some((line) => line.includes(expectedActivity))) refreshed()
       },
       setWidget: () => assert.fail("Progress must not use a widget"),
     },
@@ -185,6 +188,177 @@ test("progress status reads progress files and excludes the caller and finished 
   assert.equal(lines.length, 2)
   assert.equal(lines[0], "Tests · Checking 界 tests · updated <1m ago")
   assert.equal(lines[1], "Docs · awaiting progress · age unknown")
+  expectedActivity = "Checking 界 tests again"
+  const changed = new Promise<void>((resolve) => { refreshed = resolve })
+  await reportAgentProgress(statusFile, { state: "blocked", activity: "Checking 界 tests again", at: Date.now() })
+  await changed
+  assert.equal(lines[0], "Tests · blocked · Checking 界 tests again · updated <1m ago")
+})
+
+test("age ticks retain cached progress and advance its age without observation events", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 60000 })
+  const handlers = new Map<string, (event: any, ctx: any) => any>()
+  let notify!: (tasks: BackgroundTask[]) => void
+  let status: string | undefined
+  const directory = await mkdtemp(join(tmpdir(), "cached-progress-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const statusFile = join(directory, "agent")
+  await reportAgentProgress(statusFile, { state: "working", activity: "Cached activity", at: 1000 })
+  let loaded!: () => void
+  const ready = new Promise<void>((resolve) => { loaded = resolve })
+  const ctx = {
+    hasUI: true, cwd: "/repo",
+    sessionManager: { getSessionId: () => "cached-progress", getBranch: () => [] },
+    ui: { setStatus: (key: string, value: string | undefined) => {
+      if (key === "background-tasks") {
+        status = value
+        if (value?.includes("Cached activity")) loaded()
+      }
+    } },
+  }
+  backgroundTaskStatusExtension({ on: (name: string, handler: any) => handlers.set(name, handler) } as any, {
+    tasks: { async watchMetadata(_query: unknown, listener: typeof notify) { notify = listener; return () => {} } } as any,
+    observation: { async watch() { return () => {} } },
+  })
+  t.after(() => handlers.get("session_shutdown")!({}, ctx))
+  await handlers.get("session_start")!({ reason: "startup" }, ctx)
+  notify([{ ...task("agent", "running"), statusFile }])
+  await ready
+  await reportAgentProgress(statusFile, { state: "working", activity: "Not observed yet", at: Date.now() })
+  t.mock.timers.tick(5000)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(status, "1 agent · Cached activity · updated 1m ago")
+})
+
+function progressRuntime(t: TestContext) {
+  const handlers = new Map<string, (event: any, ctx: any) => any>()
+  let notify!: (tasks: BackgroundTask[]) => void
+  const statuses: Array<string | undefined> = []
+  const subscriptions = new Map<string, () => void>()
+  const stopped: string[] = []
+  const reads: Array<(activity: string) => void> = []
+  const readFile = fs.readFile
+  t.mock.method(fs, "readFile", ((path: unknown, ...args: unknown[]) => {
+    if (typeof path !== "string" || !path.startsWith("/ui-progress/")) {
+      return Reflect.apply(readFile, fs, [path, ...args])
+    }
+    return new Promise<string>((resolve) => {
+      reads.push((activity) => resolve(JSON.stringify({ assignment: "one", latest: { id: "report", state: "working", activity, at: Date.now() }, history: [] })))
+    })
+  }) as typeof fs.readFile)
+  syncBuiltinESMExports()
+  const ctx = {
+    hasUI: true, cwd: "/repo",
+    sessionManager: { getSessionId: () => "ui-progress-races", getBranch: () => [] },
+    ui: { setStatus: (key: string, value: string | undefined) => { if (key === "background-tasks") statuses.push(value) } },
+  }
+  backgroundTaskStatusExtension({ on: (name: string, handler: any) => handlers.set(name, handler) } as any, {
+    tasks: { async watchMetadata(_query: unknown, listener: typeof notify) { notify = listener; return () => {} } } as any,
+    observation: { async watch(directory, listener) {
+      assert.equal(subscriptions.has(directory), false, "directory already subscribed")
+      subscriptions.set(directory, listener)
+      return () => { stopped.push(directory); subscriptions.delete(directory) }
+    } },
+  })
+  const event = (name: string) => handlers.get(name)!({ reason: "startup" }, ctx)
+  t.after(() => {
+    event("session_shutdown")
+    t.mock.restoreAll()
+    syncBuiltinESMExports()
+  })
+  return {
+    event, statuses, subscriptions, stopped, reads,
+    notify: (tasks: BackgroundTask[]) => notify(tasks),
+    agent: (name: string) => ({ ...task("agent", "running"), id: name, statusFile: `/ui-progress/${name}/status` }),
+  }
+}
+
+const flushProgress = () => new Promise<void>((resolve) => setImmediate(resolve))
+
+test("progress subscriptions follow running agents and are released on tree restore and shutdown", async (t) => {
+  const runtime = progressRuntime(t)
+  await runtime.event("session_start")
+  runtime.notify([runtime.agent("first"), runtime.agent("second")])
+  await flushProgress()
+  runtime.reads.splice(0).forEach((resolve) => resolve("Initial"))
+  await flushProgress()
+  assert.deepEqual([...runtime.subscriptions.keys()], ["/ui-progress/first", "/ui-progress/second"])
+  runtime.notify([runtime.agent("second"), { ...runtime.agent("first"), status: "succeeded" }])
+  await flushProgress()
+  runtime.reads.splice(0).forEach((resolve) => resolve("Still running"))
+  await flushProgress()
+  assert.deepEqual([...runtime.subscriptions.keys()], ["/ui-progress/second"])
+  assert.deepEqual(runtime.stopped, ["/ui-progress/first"])
+  runtime.notify([runtime.agent("first"), runtime.agent("second")])
+  await flushProgress()
+  runtime.reads.splice(0).forEach((resolve) => resolve("Running again"))
+  await flushProgress()
+  assert.deepEqual([...runtime.subscriptions.keys()], ["/ui-progress/second", "/ui-progress/first"])
+  await runtime.event("session_tree")
+  assert.equal(runtime.subscriptions.size, 0)
+  runtime.notify([runtime.agent("second")])
+  await flushProgress()
+  runtime.reads.splice(0).forEach((resolve) => resolve("Restored"))
+  await flushProgress()
+  await runtime.event("session_shutdown")
+  assert.equal(runtime.subscriptions.size, 0)
+  assert.deepEqual(runtime.stopped, ["/ui-progress/first", "/ui-progress/second", "/ui-progress/first", "/ui-progress/second"])
+})
+
+test("events during a progress read drain the latest report without duplicate subscriptions", async (t) => {
+  const runtime = progressRuntime(t)
+  await runtime.event("session_start")
+  runtime.notify([runtime.agent("first")])
+  await flushProgress()
+  const change = runtime.subscriptions.get("/ui-progress/first")!
+  change()
+  change()
+  runtime.reads.shift()!("Before changes")
+  await flushProgress()
+  assert.equal(runtime.reads.length, 1)
+  runtime.reads.shift()!("Latest report")
+  await flushProgress()
+  assert.equal(runtime.statuses.at(-1), "1 agent · Latest report · updated <1m ago")
+  assert.equal(runtime.statuses.filter((status) => status?.includes("Latest report")).length, 1)
+  assert.equal(runtime.subscriptions.size, 1)
+  assert.equal(runtime.reads.length, 0)
+  assert.deepEqual(runtime.stopped, [])
+})
+
+test("a late progress read cannot restore a removed agent before the dirty drain finishes", async (t) => {
+  const runtime = progressRuntime(t)
+  await runtime.event("session_start")
+  runtime.notify([runtime.agent("first")])
+  await flushProgress()
+  runtime.notify([runtime.agent("second")])
+  const before = runtime.statuses.length
+  runtime.reads.shift()!("Obsolete report")
+  await flushProgress()
+  assert.deepEqual(runtime.statuses.slice(before), [])
+  assert.deepEqual([...runtime.subscriptions.keys()], ["/ui-progress/second"])
+  runtime.reads.shift()!("Current report")
+  await flushProgress()
+  assert.equal(runtime.statuses.at(-1), "1 agent · Current report · updated <1m ago")
+})
+
+test("late progress reads cannot publish after tree restore or shutdown", async (t) => {
+  for (const replacement of ["session_tree", "session_shutdown"]) {
+    await t.test(replacement, async (t) => {
+      const runtime = progressRuntime(t)
+      await runtime.event("session_start")
+      runtime.notify([runtime.agent("first")])
+      await flushProgress()
+      const lateEvent = runtime.subscriptions.get("/ui-progress/first")!
+      await runtime.event(replacement)
+      const before = [...runtime.statuses]
+      lateEvent()
+      runtime.reads.shift()!("Obsolete report")
+      await flushProgress()
+      assert.deepEqual(runtime.statuses, before)
+      assert.equal(runtime.subscriptions.size, 0)
+      assert.equal(runtime.reads.length, 0)
+    })
+  }
 })
 
 test("single agent activities hide working and cap reports at 50 characters", () => {

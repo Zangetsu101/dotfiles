@@ -1,5 +1,4 @@
-import { watch, type FSWatcher } from "node:fs"
-import { mkdir } from "node:fs/promises"
+import { sharedDirectoryObservation } from "./directory-observation.ts"
 import { join } from "node:path"
 import { BackgroundTasks, systemTmux, taskMetadataDirectory, type BackgroundTask, type TaskMetadataOptions, type TaskQuery, type TmuxProcessAdapter } from "./background-task.ts"
 
@@ -7,12 +6,12 @@ const hooks = ["after-new-session", "after-new-window", "after-split-window", "a
 const quote = (text: string) => `'${text.replaceAll("'", `'"'"'`)}'`
 type Subscription = { query: TaskQuery; listener: (tasks: BackgroundTask[]) => void; signature?: string }
 
-/** Shares filesystem events and tmux hooks across subscribers, without polling. */
+/** Shares directory invalidations and tmux hooks across task subscribers. */
 export class BackgroundTaskWatcher {
   private readonly tasks: BackgroundTasks
   private readonly directory: string
   private readonly subscriptions = new Set<Subscription>()
-  private watcher?: FSWatcher
+  private stopObservation?: () => void
   private queue: Promise<void> = Promise.resolve()
   private dirty = false
   private refreshQueued = false
@@ -38,15 +37,19 @@ export class BackgroundTaskWatcher {
       this.subscriptions.delete(subscription)
       if (this.subscriptions.size) return
       ++this.generation
-      this.watcher?.close()
-      this.watcher = undefined
+      this.stopObservation?.()
+      this.stopObservation = undefined
       // Finish old hook operations before a new generation installs its hooks.
       void this.enqueue(() => this.removeHooks())
     }
     try {
       await this.enqueue(async () => {
         if (generation !== this.generation) return
-        if (!this.watcher) await this.openWatcher(generation)
+        if (!this.stopObservation) {
+          const stop = await sharedDirectoryObservation.watch(this.directory, () => this.invalidate(generation))
+          if (generation !== this.generation) { stop(); return }
+          this.stopObservation = stop
+        }
         this.dirty = true
         await this.reconcile(generation)
       })
@@ -57,24 +60,6 @@ export class BackgroundTaskWatcher {
     const result = this.queue.then(operation)
     this.queue = result.catch(() => undefined)
     return result
-  }
-  private async openWatcher(generation: number): Promise<void> {
-    await mkdir(this.directory, { recursive: true, mode: 0o700 })
-    if (generation !== this.generation) return
-    const watcher = watch(this.directory, () => this.invalidate(generation))
-    this.watcher = watcher
-    watcher.on("error", error => {
-      watcher.close()
-      if (this.watcher !== watcher || generation !== this.generation) return
-      this.watcher = undefined
-      console.error("Background task watcher failed:", error)
-      void this.enqueue(async () => {
-        if (generation !== this.generation) return
-        await this.openWatcher(generation)
-        this.dirty = true
-        await this.reconcile(generation)
-      }).catch(error => console.error("Background task watcher recovery failed:", error))
-    })
   }
   private async installHooks(generation: number): Promise<void> {
     const server = await this.tmux.run(["display-message", "-p", "#{pid}"]).catch(() => undefined)

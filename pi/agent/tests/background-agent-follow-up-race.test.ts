@@ -52,6 +52,8 @@ for (const transientError of [false, true]) test(`rapid follow-up completion is 
     await waitFor(() => blocked)
     assert.equal((await parent.execute("background_agent_message", { id: spawned.details.id, message: "Second task" })).details.status, "delivered")
     await child.execute("background_agent_report", { state: "completed", activity: "Second result" })
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    assert.equal(parent.messages.length, 0, "later file events must not deliver past an in-flight completion")
     release!()
     await waitFor(() => parent.messages.length === 2)
     assert.deepEqual(parent.messages.map((message) => message.details.output), ["First result", "Second result"])

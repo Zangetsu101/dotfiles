@@ -80,7 +80,7 @@ test("force message to an active agent requests interruption and delivers once",
   assert.deepEqual(child.userMessages.map((message) => message.text), ["Stop and change direction"])
 }))
 
-test("an already-aborting operation settles before recovery is submitted", async () => fixture(async ({ parent, child, id }) => {
+test("an already-aborting operation settles before recovery is submitted", async () => fixture(async ({ parent, child, id, statusFile }) => {
   await child.emit("session_start")
   const controller = new AbortController()
   child.context.signal = controller.signal
@@ -88,7 +88,12 @@ test("an already-aborting operation settles before recovery is submitted", async
   await child.emit("agent_start")
   controller.abort()
   const delivery = parent.execute("background_agent_message", { id, message: "Recover", force: true })
-  await new Promise(resolve => setTimeout(resolve, 50))
+  let observed = false
+  for (let attempt = 0; attempt < 100 && !observed; attempt++) {
+    observed = (await readdir(`${statusFile}.messages`)).some((name) => name.endsWith(".interrupt"))
+    if (!observed) await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  assert.ok(observed, "the request must reach the aborting operation before it settles")
   assert.equal(child.userMessages.length, 0)
   await child.emit("agent_end")
   await child.emit("agent_settled")

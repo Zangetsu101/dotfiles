@@ -3,6 +3,8 @@ import { BackgroundTasks, type BackgroundTask } from "./lib/background-task.ts"
 import { familyForContext } from "./lib/background-family.ts"
 
 import { readAgentProgress } from "./lib/background-progress.ts"
+import { dirname } from "node:path"
+import { sharedDirectoryObservation } from "./lib/directory-observation.ts"
 
 const STATUS_KEY = "background-tasks"
 const replaceControlCharacters = (text: string) => text.replace(/[\x00-\x1f\x7f-\x9f]/g, " ")
@@ -44,17 +46,20 @@ export function formatRunningTasks(tasks: BackgroundTask[], nodeId?: string, now
   return [...parts, ...activities].join(" · ")
 }
 
-export default function (pi: ExtensionAPI, options: { tasks?: BackgroundTasks } = {}) {
+export default function (pi: ExtensionAPI, options: { tasks?: BackgroundTasks; observation?: Pick<typeof sharedDirectoryObservation, "watch"> } = {}) {
   const tasks = options.tasks ?? new BackgroundTasks()
   let stopMetadata: (() => void) | undefined
   let generation = 0
   let shuttingDown = false
   let ageTimer: NodeJS.Timeout | undefined
+  let stopProgress: (() => void) | undefined
 
   const restore = async (reason: string, ctx: ExtensionContext) => {
     const restoring = ++generation
     stopMetadata?.()
     stopMetadata = undefined
+    stopProgress?.()
+    stopProgress = undefined
     if (ageTimer) clearInterval(ageTimer)
     ageTimer = undefined
     if (ctx.hasUI) {
@@ -64,22 +69,51 @@ export default function (pi: ExtensionAPI, options: { tasks?: BackgroundTasks } 
     if (shuttingDown || !ctx.hasUI) return
     const family = familyForContext(reason, ctx, pi.getSessionName?.())
     let visibleTasks: BackgroundTask[] = []
+    let cachedTasks: BackgroundTask[] = []
     let updating = false
+    let dirty = false
+    const subscriptions = new Map<string, () => void>()
+    const active = () => !shuttingDown && restoring === generation
+    stopProgress = () => {
+      for (const stop of subscriptions.values()) stop()
+      subscriptions.clear()
+    }
     const updateProgress = async () => {
-      if (updating || shuttingDown || restoring !== generation) return
+      dirty = true
+      if (updating || !active()) return
       updating = true
       try {
-        const snapshot = visibleTasks
-        const enriched = await Promise.all(snapshot.map(async (task) => task.kind === "agent" ? { ...task, progress: await readAgentProgress(task.statusFile) } : task))
-        if (!shuttingDown && restoring === generation && snapshot === visibleTasks) updateUI(ctx, enriched, family.nodeId)
+        while (dirty && active()) {
+          dirty = false
+          const snapshot = visibleTasks
+          const directories = new Set(snapshot.filter((task) => task.kind === "agent" && task.status === "running" && task.id !== family.nodeId).map((task) => dirname(task.statusFile)))
+          for (const [directory, stop] of subscriptions) {
+            if (!directories.has(directory)) { stop(); subscriptions.delete(directory) }
+          }
+          for (const directory of directories) {
+            if (subscriptions.has(directory)) continue
+            const stop = await (options.observation ?? sharedDirectoryObservation).watch(directory, refreshProgress)
+            if (!active()) { stop(); return }
+            subscriptions.set(directory, stop)
+          }
+          const enriched = await Promise.all(snapshot.map(async (task) => task.kind === "agent" && task.status === "running" && task.id !== family.nodeId
+            ? { ...task, progress: await readAgentProgress(task.statusFile) ?? task.progress }
+            : task))
+          if (active() && snapshot === visibleTasks) {
+            cachedTasks = enriched
+            updateUI(ctx, cachedTasks, family.nodeId)
+          }
+        }
       } finally { updating = false }
     }
-    ageTimer = setInterval(() => { void updateProgress().catch((error) => console.error("background task progress:", error)) }, 5000)
+    const refreshProgress = () => { void updateProgress().catch((error) => console.error("background task progress:", error)) }
+    ageTimer = setInterval(() => { if (active()) updateUI(ctx, cachedTasks, family.nodeId) }, 5000)
     const stop = await tasks.watchMetadata({ subtreeRootId: family.nodeId }, (visible) => {
-      if (!shuttingDown && restoring === generation) {
+      if (active()) {
         visibleTasks = visible
-        updateUI(ctx, visible, family.nodeId)
-        void updateProgress().catch((error) => console.error("background task progress:", error))
+        cachedTasks = visible
+        updateUI(ctx, cachedTasks, family.nodeId)
+        refreshProgress()
       }
     })
     if (shuttingDown || restoring !== generation) stop()
@@ -92,6 +126,8 @@ export default function (pi: ExtensionAPI, options: { tasks?: BackgroundTasks } 
   pi.on("session_shutdown", (_event, ctx) => {
     shuttingDown = true
     generation++
+    stopProgress?.()
+    stopProgress = undefined
     if (ageTimer) clearInterval(ageTimer)
     ageTimer = undefined
     stopMetadata?.()

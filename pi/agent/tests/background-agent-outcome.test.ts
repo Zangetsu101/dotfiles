@@ -56,8 +56,13 @@ for (const runtimeFailure of ["exit", "disappeared"] as const) test(`reported co
     assert.equal(parent.messages[1].details.status, "failed")
     assert.deepEqual(parent.messageOptions[1], { deliverAs: "steer", triggerTurn: true })
     if (runtimeFailure === "exit") await writeFile(spawned.details.statusFile, JSON.stringify({ kind: "exit", exitCode: 2 }))
-    else await tmux.run(["kill-window", "-t", spawned.details.target])
+    else {
+      await tmux.run(["kill-window", "-t", spawned.details.target])
+      // Fake tmux does not execute the installed lifecycle invalidation hook.
+      await writeFile(join(directory, "invalidation"), "")
+    }
     await waitFor(() => parent.messages.length === 3)
+    assert.equal(parent.messages[2].details.status, "failed", "runtime disappearance after an assignment is a runtime failure, not task termination")
     assert.match(parent.messages[2].content, runtimeFailure === "exit" ? /exit code 2/ : /disappeared/)
     assert.deepEqual(parent.messageOptions[2], { deliverAs: "steer", triggerTurn: true })
     const stopped = await parent.execute("background_task", { action: "check-in", id: spawned.details.id, afterMinutes: 1 })

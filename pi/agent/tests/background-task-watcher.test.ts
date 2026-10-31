@@ -247,3 +247,59 @@ test("subscribers observe another owner's creation, rename, status and removal w
     await waitFor(() => latest.length === 0)
   } finally { dispose(); dispose(); await rm(directory, { recursive: true, force: true }) }
 })
+
+test("duplicate metadata events and later subscriptions do not redeliver unchanged snapshots", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "task-watcher-dedup-"))
+  const tmux = new FakeTmuxProcessAdapter()
+  let scans = 0
+  const watcher = new BackgroundTaskWatcher({ run: async args => {
+    if (args[0] === "list-windows") scans++
+    return tmux.run(args)
+  } }, { metadataDirectory: directory })
+  let deliveries = 0, laterDeliveries = 0
+  const first = await watcher.watch({ familyId: "family" }, () => { deliveries++ })
+  let second: (() => void) | undefined
+  try {
+    assert.equal(deliveries, 1)
+    for (let event = 0; event < 2; event++) {
+      const before = scans
+      await writeFile(join(directory, "invalidation"), "unchanged")
+      await waitFor(() => scans > before)
+      // A later watch waits behind the event's reconciliation in the public queue.
+      second = await watcher.watch({ familyId: "family" }, () => { laterDeliveries++ })
+      assert.equal(deliveries, 1)
+      assert.equal(laterDeliveries, event + 1)
+      second()
+    }
+  } finally { first(); second?.(); await rm(directory, { recursive: true, force: true }) }
+})
+
+test("the shared safety sweep recovers hooks after a server replacement without metadata events", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "task-watcher-safety-"))
+  const tmux = new FakeTmuxProcessAdapter()
+  let server = "old"
+  const installed = new Set<string>()
+  const watcher = new BackgroundTaskWatcher({ run: async args => {
+    if (args[0] === "display-message" && args.at(-1) === "#{pid}") return server
+    if (args[0] === "set-hook") {
+      if (args[1] === "-g") installed.add(args[2])
+      else installed.delete(args[2])
+    }
+    return tmux.run(args)
+  } }, { metadataDirectory: directory })
+  t.mock.timers.enable({ apis: ["setInterval"] })
+  const stop = await watcher.watch({ familyId: "family" }, () => {})
+  try {
+    const count = installed.size
+    assert.ok(count > 0)
+    installed.clear()
+    server = "replacement"
+    t.mock.timers.tick(30_000)
+    await waitFor(() => installed.size === count)
+  } finally {
+    stop()
+    await waitFor(() => installed.size === 0)
+    t.mock.timers.reset()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
