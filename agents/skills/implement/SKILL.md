@@ -1,10 +1,10 @@
 ---
 name: implement
 source: https://github.com/mattpocock/skills/tree/main/skills/engineering/implement
-description: "Workflow for any code change: features, fixes, refactors, specs, or tickets. Use whenever you are about to edit code."
+description: "Implement a non-trivial code change, whether from conversation, a spec, or tickets. Use before editing code."
 ---
 
-Implement the work the user described, whether in conversation, a spec, or tickets.
+Implement the work the user described.
 
 Use /tdd where possible, at pre-agreed seams.
 
