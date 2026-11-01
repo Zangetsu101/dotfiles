@@ -1,7 +1,7 @@
 ---
 name: implement
 source: https://github.com/mattpocock/skills/tree/main/skills/engineering/implement
-description: "Implement a non-trivial code change, whether from conversation, a spec, or tickets. Use before editing code."
+description: "Implement a non-trivial code change, whether from conversation, a spec, or tickets. When you skip this for a trivial change, tell the user."
 ---
 
 Implement the work the user described.
