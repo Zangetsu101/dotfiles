@@ -68,11 +68,27 @@ export class BackgroundTaskWatcher {
       this.installed.clear()
       this.server = server
     }
-    const command = `run-shell -b ${quote(`touch ${quote(join(this.directory, "tmux-invalidation"))}`)}`
+    // Only a validated digest enters the shell. Raw family IDs may contain
+    // shell syntax or newlines, and tmux's q modifier drops literal newlines.
+    const validToken = `#{m/r:^family-${"[a-f0-9]".repeat(64)}$,#{@pi_task_invalidation}}`
+    const sameFamily = "#{&&:#{!=:#{@pi_task_invalidation_family},},#{==:#{@pi_task_family_id},#{@pi_task_invalidation_family}}}"
+    const routable = `#{&&:${validToken},${sameFamily}}`
     for (const hook of hooks) {
       if (generation !== this.generation) return
       if (this.installed.has(hook)) continue
       try {
+        let scoped = "0"
+        if (["after-new-window", "after-split-window", "after-rename-window", "after-rename-session"].includes(hook)) scoped = routable
+        if (hook === "after-set-option") {
+          // Older tmux versions without hook flags remain conservative, as do
+          // global/server writes and edits to the routing identity itself.
+          const local = "#{&&:#{hook_flag_t},#{!:#{||:#{hook_flag_g},#{hook_flag_s}}}}"
+          const identity = "#{||:#{==:#{hook_argument_0},@pi_task_family_id},#{||:#{==:#{hook_argument_0},@pi_task_invalidation},#{==:#{hook_argument_0},@pi_task_invalidation_family}}}"
+          scoped = `#{&&:${routable},#{&&:${local},#{!:${identity}}}}`
+        }
+        // Destructive hooks can expose a surviving, unrelated session's options.
+        const filename = `#{?${scoped},#{@pi_task_invalidation},tmux-invalidation}`
+        const command = `run-shell -b ${quote(`touch ${quote(this.directory)}/${filename}`)}`
         await this.tmux.run(["set-hook", "-g", `${hook}[${this.hookIndex}]`, command])
         this.installed.add(hook)
       } catch { /* No server yet, or an unsupported hook. The next event retries installation. */ }

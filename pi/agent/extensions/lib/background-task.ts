@@ -238,6 +238,8 @@ export class BackgroundTasks {
           session ||= name
           createdSession = true
           this.sessions.set(familyId, session)
+          await this.tmux.run(["set-option", "-t", session, "@pi_task_invalidation_family", familyId])
+          await this.tmux.run(["set-option", "-t", session, "@pi_task_invalidation", familyInvalidationFilename(familyId)])
           const metadata = [
             ["@pi_task_family_id", familyId],
             ["@pi_task_family_name", input.familyName ?? familyId],
@@ -366,6 +368,10 @@ export class BackgroundTasks {
   async reconcileFamily(family: { familyId: string; familyName: string; rootId: string; rootPane: string }): Promise<void> {
     const session = await this.familySession(family.familyId)
     if (!session) return
+    // Disable routing while replacing a possibly stale identity/token pair.
+    await this.tmux.run(["set-option", "-t", session, "@pi_task_invalidation", ""])
+    await this.tmux.run(["set-option", "-t", session, "@pi_task_invalidation_family", family.familyId])
+    await this.tmux.run(["set-option", "-t", session, "@pi_task_invalidation", familyInvalidationFilename(family.familyId)])
     await Promise.all([
       this.tmux.run(["set-option", "-t", session, "@pi_task_family_name", family.familyName]),
       this.tmux.run(["set-option", "-t", session, "@pi_task_root_id", family.rootId]),

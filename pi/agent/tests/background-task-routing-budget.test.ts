@@ -40,10 +40,10 @@ test("two real monitors have a bounded generic-hook fallback cost across familie
     assert.equal(unrelatedVisible, 0)
     t.diagnostic(`creation-triggered calls: ${JSON.stringify(counts)}; safety sweep calls: 0 (interval clock held)`)
     assert.ok(counts.creator <= 100, "creator call budget")
-    // Hooks intentionally remain generic, including after-set-option. This is
-    // not a zero-call isolation claim for real tmux creation.
-    assert.ok(counts.same <= 180, "same-family hook fallback budget")
-    assert.ok(counts.unrelated <= 180, "unrelated-family hook fallback budget")
+    // Initial session setup, identity writes and bootstrap deletion still
+    // need generic invalidations. Established-family hooks route separately.
+    assert.ok(counts.same <= 90, "same-family hook fallback budget")
+    assert.ok(counts.unrelated <= 30, "unrelated-family hook fallback budget")
     const before = { ...counts }
     await settle()
     assert.deepEqual(counts, before, "idle before the safety sweep costs no tmux calls")
