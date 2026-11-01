@@ -33,7 +33,8 @@ async function fixture(run: (f: { parent: FakePiRuntime; child: FakePiRuntime; t
     process.env.PI_BACKGROUND_TASK_FAMILY_ID = "family:conversation"
     process.env.PI_BACKGROUND_TASK_ROOT_ID = "root:conversation"
     process.env.PI_BACKGROUND_TASK_ID = spawned.details.id
-    await backgroundAgent(child.pi, { tmux })
+    // Sharing the parent's private directory keeps other processes' task writes from waking the child.
+    await backgroundAgent(child.pi, { tasks: new BackgroundTasks(tmux, { metadataDirectory: directory }), tmux })
     await run({ parent, child, tmux, statusFile: spawned.details.statusFile, id: spawned.details.id })
   } finally {
     await child.emit("session_shutdown")

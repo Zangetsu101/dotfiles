@@ -27,7 +27,8 @@ test("a child agent waits for nested background monitors before reporting comple
       return (await execFileAsync("tmux", ["-L", socket, "-f", "/dev/null", ...args], { encoding: "utf8" })).stdout.trim()
     },
   }
-  const tasks = new BackgroundTasks(tmux)
+  // A private metadata directory keeps other processes' task writes from waking this test's watchers.
+  const tasks = new BackgroundTasks(tmux, { metadataDirectory: join(directory, "metadata") })
   const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith("PI_BACKGROUND_") || key === "TMUX" || key === "TMUX_PANE"))
   for (const key of Object.keys(inherited)) delete process.env[key]
   process.env.PI_BACKGROUND_AGENT_STATUS_FILE = statusFile
@@ -36,7 +37,8 @@ test("a child agent waits for nested background monitors before reporting comple
     await tmux.run(["kill-server"]).catch(() => undefined)
     for (const key of Object.keys(process.env)) if (key.startsWith("PI_BACKGROUND_") || key === "TMUX" || key === "TMUX_PANE") delete process.env[key]
     Object.assign(process.env, inherited)
-    await rm(directory, { recursive: true, force: true })
+    // Shutdown can still be flushing task metadata into the directory.
+    await rm(directory, { recursive: true, force: true, maxRetries: 5 })
   })
 
   const handlers = new Map<string, Handler[]>()

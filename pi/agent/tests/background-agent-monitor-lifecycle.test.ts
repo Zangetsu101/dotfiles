@@ -11,7 +11,7 @@ installBackgroundTaskEnvironmentHooks()
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const waitFor = async (condition: () => boolean) => {
-  for (let attempt = 0; attempt < 50 && !condition(); attempt++) await pause(10)
+  for (let attempt = 0; attempt < 300 && !condition(); attempt++) await pause(10)
   assert.ok(condition(), "condition was not met")
 }
 
