@@ -5,7 +5,7 @@ import { promisify } from "node:util"
 import { access, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { BackgroundTasks, type BackgroundTask } from "../extensions/lib/background-task.ts"
+import { familyInvalidationFilename, BackgroundTasks, type BackgroundTask } from "../extensions/lib/background-task.ts"
 import { BackgroundTaskWatcher } from "../extensions/lib/background-task-watcher.ts"
 
 const exec = promisify(execFile)
@@ -36,8 +36,28 @@ async function fixture(t: TestContext) {
     await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     t.mock.timers.reset()
   })
-  const task = await create("family")
-  const otherTask = await create("other")
+  for (const family of ["family", "other"]) {
+    const [target, window] = (await run(["new-session", "-d", "-P", "-F", "#{pane_id}\t#{window_id}", "-s", family, "sleep 60"])).split("\t")
+    const routing = {
+      family_id: family, root_id: `${family}-root`,
+      invalidation_family: family, invalidation: familyInvalidationFilename(family),
+    }
+    const identity = {
+      id: `${family}-task`, family_id: family, root_id: `${family}-root`,
+      parent_id: `${family}-root`, kind: "monitor", label: "before",
+      status: "running", pool_window: window, cwd: "/tmp",
+    }
+    const commands = [
+      ...Object.entries(routing).map(([key, value]) => ["set-option", "-t", target, `@pi_task_${key}`, value]),
+      ...Object.entries(identity).map(([key, value]) => ["set-option", "-p", "-t", target, `@pi_task_${key}`, value]),
+    ]
+    await run(commands.flatMap((args, index) => [...(index ? [";"] : []), ...args]))
+  }
+  const initial = await owner.list()
+  const task = initial.find(task => task.familyId === "family")
+  const otherTask = initial.find(task => task.familyId === "other")
+  assert.ok(task)
+  assert.ok(otherTask)
   for (const [name, family] of [["same", "family"], ["other", "other"]] as const) {
     const watcher = new BackgroundTaskWatcher({ run: args => { counts[name]++; return run(args) } }, { metadataDirectory: directory })
     stops.push(await watcher.watch({ subtreeRootId: `${family}-root`, routingFamilyId: family }, tasks => { snapshots[name] = tasks }))
@@ -72,6 +92,7 @@ test("split, new-window and rename hooks in an established family do not scan an
     await waitFor(() => f.counts.same > 0)
     await settle()
     assert.equal(f.counts.other, 0, `${args[0]} routes only to its family`)
+    assert.deepEqual(f.snapshots.same.map(task => task.target), [f.task.target], "unowned panes do not inherit task identity")
   }
 })
 
