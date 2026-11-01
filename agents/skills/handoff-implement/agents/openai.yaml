@@ -1,5 +1,0 @@
-interface:
-  display_name: "Handoff Implement"
-  short_description: "Hand work to a background implement agent"
-policy:
-  allow_implicit_invocation: false

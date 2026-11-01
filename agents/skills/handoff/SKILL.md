@@ -1,17 +1,10 @@
 ---
 name: handoff
-source: https://github.com/mattpocock/skills/tree/main/skills/productivity/handoff
-description: Compact the current conversation into a handoff document for another agent to pick up.
-argument-hint: "What will the next session be used for?"
+description: Hand the current conversation's work to a background agent that implements it.
+argument-hint: "What should the background agent implement?"
 disable-model-invocation: true
 ---
 
-Write a handoff document summarising the current conversation so a fresh agent can continue the work. Save to the temporary directory of the user's OS - not the current workspace.
+Write a spec for the work agreed in this conversation, in the local issue tracker if the repo has one, otherwise in the OS temp directory. If the user passed arguments, treat them as the scope.
 
-Include a "suggested skills" section in the document, naming which skills the next agent should call the Skill tool for.
-
-Do not duplicate content already captured in other artifacts (specs, plans, ADRs, issues, commits, diffs). Reference them by path or URL instead.
-
-Redact any sensitive information, such as API keys, passwords, or personally identifiable information.
-
-If the user passed arguments, treat them as a description of what the next session will focus on and tailor the doc accordingly.
+Get the user's sign-off on the spec, then spawn a background agent to implement it with the implement skill.
