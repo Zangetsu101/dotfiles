@@ -329,7 +329,7 @@ export class BackgroundTasks {
         try {
           return await this.tmux.run(["split-window", "-d", orientation, "-P", "-F", "#{pane_id}", "-t", pane.target, ...command])
         } catch (error) {
-          if (!/^(?:no space for new pane|pane too small)$/.test(tmuxDiagnostic(error))) throw error
+          if (!/^(?:no space for (?:a )?new pane|pane too small)$/.test(tmuxDiagnostic(error))) throw error
         }
       }
     }
