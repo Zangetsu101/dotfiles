@@ -32,7 +32,8 @@ import { notifyRunningTask } from "./lib/background-task-check-in.ts"
 import { backgroundAttachCommand } from "./lib/background-attach.ts"
 import { backgroundToolRenderers, registerBackgroundMessages } from "./lib/background-rendering.ts"
 
-import { reportAgentProgress, readAgentProgress, describeAgentProgress, type AgentReport } from "./lib/background-progress.ts"
+import { readAgentProgress, describeAgentProgress } from "./lib/background-progress.ts"
+import { BackgroundAssignment, withMailboxLock } from "./lib/background-assignment.ts"
 import { canMessageBackgroundAgent, setBackgroundToolActive } from "./lib/background-tool-availability.ts"
 
 const execFileAsync = promisify(execFile)
@@ -146,20 +147,6 @@ async function listAgents(tasks: BackgroundTasks, tmux: TmuxProcessAdapter, subt
   })
 }
 
-async function withMailboxLock<T>(statusFile: string, operation: () => Promise<T>): Promise<T> {
-  const lock = `${statusFile}.message-lock`
-  for (let attempt = 0; ; attempt++) {
-    try {
-      await mkdir(lock)
-      break
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST" || attempt >= 100) throw error
-      await new Promise((resolve) => setTimeout(resolve, 10))
-    }
-  }
-  try { return await operation() } finally { await rm(lock, { recursive: true, force: true }) }
-}
-
 async function publishMailboxResponse(path: string, response: string, exclusive = false): Promise<void> {
   if (exclusive && existsSync(path)) throw Object.assign(new Error(`Response already exists: ${path}`), { code: "EEXIST" })
   const temporary = `${path}.${randomUUID()}.tmp`
@@ -178,11 +165,18 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
   const setWindowOption = async (key: string, value: string) => {
     if (pane) await tmux.run(["set-option", "-w", "-t", pane, key, value]).catch(() => undefined)
   }
-  let hasReport = false
-  let latestReport: AgentReport | undefined
+  const assignment = new BackgroundAssignment(statusFile, {
+    now,
+    setRunning: async () => {
+      await Promise.all([
+        setWindowOption("@pi_agent_status", "running"),
+        setWindowOption("@pi_task_status", "running"),
+      ])
+    },
+  })
   let reminded = false
   pi.on("tool_call", (event) => {
-    if (!hasReport && event.toolName !== "background_agent_report") {
+    if (assignment.needsInitialReport && event.toolName !== "background_agent_report") {
       return { block: true, reason: "Call background_agent_report successfully before starting assignment work." }
     }
   })
@@ -202,18 +196,7 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
       attention: Type.Optional(Type.Boolean({ description: "Set true with state blocked and help to request parent intervention." })),
     }),
     async execute(_id, params) {
-      if (!params.activity.trim()) throw new Error("Activity must not be empty")
-      const progress = await withMailboxLock(statusFile, async () => {
-        if (reported) throw new Error("Assignment already completed; wait for follow-up work")
-        const progress = await reportAgentProgress(statusFile, { ...params, activity: params.activity.trim(), state: params.state ?? "working", at: now() })
-        if (progress.latest.state === "completed" || progress.latest.state === "failed") {
-          await writeTaskCompletion(statusFile, { kind: "reported", outcome: progress.latest.state, assignment: progress.assignment, output: progress.latest.activity })
-          reported = true
-        }
-        return progress
-      })
-      hasReport = true
-      latestReport = progress.latest
+      const progress = await assignment.report(params)
       reminded = false
       scheduleReminder()
       return { content: [{ type: "text", text: "Progress recorded" }], details: { progress } }
@@ -235,12 +218,14 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
   const scheduleReminder = () => {
     if (reminderTimer) clearTimeout(reminderTimer)
     reminderTimer = undefined
-    if (closed || !processing || reported || reminded || !latestReport) return
+    const latestReport = assignment.latestReport
+    if (closed || !processing || assignment.completed || reminded || !latestReport) return
     if (latestReport.state === "blocked" && latestReport.help?.trim()) return
     reminderTimer = setTimeout(remindIfStale, Math.max(0, latestReport.at + STALE_REPORT_MS - now()))
   }
   const remindIfStale = () => {
-    if (closed || !processing || reported || reminded || !latestReport) return
+    const latestReport = assignment.latestReport
+    if (closed || !processing || assignment.completed || reminded || !latestReport) return
     if (latestReport.state === "blocked" && latestReport.help?.trim()) return
     if (now() - latestReport.at < STALE_REPORT_MS) { scheduleReminder(); return }
     pi.sendMessage({
@@ -296,7 +281,7 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
           await new Promise<void>((resolve) => { interrupted = { resolve } })
         }
         if (closed || receiving !== mailboxGeneration) return
-        if (reported) await resetAssignment()
+        if (await assignment.resume()) reminded = false
         if (closed || receiving !== mailboxGeneration) return
         pi.sendUserMessage(message, processing ? { deliverAs: "steer" } : undefined)
         accepted = true
@@ -363,21 +348,6 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
     await rm(operationFile, { force: true })
   })
   const activeBackgroundActivities = new Set<string>()
-  let reported = existsSync(statusFile)
-  const resetAssignment = () => withMailboxLock(statusFile, async () => {
-    await Promise.all([
-      rm(statusFile, { force: true }),
-      rm(`${statusFile}.notified`, { force: true }),
-      rm(`${statusFile}.progress`, { force: true }),
-      rm(`${statusFile}.check-in`, { force: true }),
-      setWindowOption("@pi_agent_status", "running"),
-      setWindowOption("@pi_task_status", "running"),
-    ])
-    reported = false
-    hasReport = false
-    latestReport = undefined
-    reminded = false
-  })
 
   pi.events.on(BACKGROUND_ACTIVITY_STARTED, (data) => {
     const activity = data as BackgroundActivity
@@ -390,29 +360,15 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
   })
 
   pi.on("agent_start", async () => {
-    if (reported) await resetAssignment()
+    if (await assignment.resume()) reminded = false
   })
 
   pi.on("agent_settled", async (_event, ctx) => {
     interrupted?.resolve()
     interrupted = undefined
     finishingOperation = undefined
-    if (reported || activeBackgroundActivities.size > 0) return
-    await receive()
-    await withMailboxLock(statusFile, async () => {
-      if ((await readdir(mailbox).catch((error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT") return [] as string[]
-        throw error
-      })).some((name) => name.endsWith(".request"))) return
-      reported = true
-      const result = finalAssistantOutput(ctx)
-      await writeTaskCompletion(statusFile, {
-        kind: "settled",
-        assignment: (await readAgentProgress(statusFile))?.assignment ?? randomUUID(),
-        output: result.output,
-        stopReason: result.stopReason,
-      })
-    })
+    if (activeBackgroundActivities.size > 0) return
+    await assignment.settle(() => finalAssistantOutput(ctx), receive)
   })
 
   pi.on("model_select", async (event) => {
