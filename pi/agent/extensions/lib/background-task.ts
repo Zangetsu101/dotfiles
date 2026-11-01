@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { execFile } from "node:child_process"
 import { mkdir, mkdtemp, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -13,7 +14,11 @@ export const BACKGROUND_TASK_STATUS_CHANGED = "pi:background-task-status-changed
 export const BACKGROUND_TASK_REMOVED = "pi:background-task-removed"
 export type TaskKind = "monitor" | "agent"
 export type TaskStatus = "running" | "succeeded" | "failed" | "terminated" | "interrupted"
-export type TaskQuery = { familyId: string } | { subtreeRootId: string }
+/** routingFamilyId narrows invalidations only; subtree membership still determines visibility. */
+export type TaskQuery = { familyId: string } | { subtreeRootId: string; routingFamilyId?: string }
+export function familyInvalidationFilename(familyId: string): string {
+  return `family-${createHash("sha256").update(familyId).digest("hex")}`
+}
 export type BackgroundTask = {
   progress?: import("./background-progress.ts").AgentProgress
   id: string
@@ -152,9 +157,9 @@ export class BackgroundTasks {
     this.metadataDirectory = options.metadataDirectory ?? taskMetadataDirectory
   }
 
-  private async invalidateMetadata(): Promise<void> {
+  private async invalidateMetadata(familyId?: string): Promise<void> {
     await mkdir(this.metadataDirectory, { recursive: true, mode: 0o700 })
-    await writeAtomic(join(this.metadataDirectory, "invalidation"), "")
+    await writeAtomic(join(this.metadataDirectory, familyId ? familyInvalidationFilename(familyId) : "invalidation"), "")
   }
 
   async watchMetadata(query: TaskQuery, listener: (tasks: BackgroundTask[]) => void): Promise<() => void> {
@@ -291,7 +296,7 @@ export class BackgroundTasks {
         if (input.remainOnExit) await this.tmux.run(["set-option", "-p", "-t", target, "remain-on-exit", "on"])
         await this.tmux.run(["wait-for", "-S", ready])
         await this.commitSiblingOrdinal(session, allocation)
-        await this.invalidateMetadata()
+        await this.invalidateMetadata(familyId)
         this.known.set(id, task)
         if (createdSession) await this.tmux.run(["kill-window", "-t", `${session}:bootstrap`]).catch(() => undefined)
         return task
@@ -309,7 +314,7 @@ export class BackgroundTasks {
           this.sessions.delete(familyId)
           this.pools.delete(familyId)
         }
-        if (target || createdWindow) await this.invalidateMetadata().catch(() => undefined)
+        if (target || createdWindow) await this.invalidateMetadata(familyId).catch(() => undefined)
         await rm(directory, { recursive: true, force: true }).catch(() => undefined)
         throw error
       }
@@ -373,7 +378,7 @@ export class BackgroundTasks {
       const scope = task.kind === "agent" ? "-w" : "-p"
       await this.tmux.run(["set-option", scope, "-t", task.target, "@pi_task_root_pane", family.rootPane])
       if (task.parentId === family.rootId) await this.tmux.run(["set-option", scope, "-t", task.target, "@pi_task_parent_target", family.rootPane])
-      await this.invalidateMetadata()
+      await this.invalidateMetadata(family.familyId)
     }
   }
   async renameFamily(familyId: string, label: string): Promise<void> {
@@ -385,7 +390,7 @@ export class BackgroundTasks {
       this.tmux.run(["rename-session", "-t", session, name]),
       this.tmux.run(["set-option", "-t", session, "@pi_task_family_name", label]),
     ])
-    await this.invalidateMetadata()
+    await this.invalidateMetadata(familyId)
   }
   async renameNode(nodeId: string, label: string): Promise<void> {
     const familyId = (await this.list()).find((task) => task.id === nodeId)?.familyId
@@ -418,7 +423,7 @@ export class BackgroundTasks {
       this.tmux.run(["set-option", scope, "-t", task.target, "@pi_task_display_name", task.displayName ?? task.label]),
     ])
     this.known.set(task.id, task)
-    await this.invalidateMetadata()
+    await this.invalidateMetadata(task.familyId)
   }
   async list(query?: TaskQuery, liveOnly = false): Promise<BackgroundTask[]> {
     const format = (target: string) => `${target}\t${keys.map((key) => `#{@pi_task_${key}}`).join("\t")}`
@@ -511,7 +516,7 @@ export class BackgroundTasks {
     this.known.set(task.id, task)
     const scope = task.kind === "monitor" ? "-p" : "-w"
     await this.tmux.run(["set-option", scope, "-t", task.target, "@pi_task_status", status]).catch(() => undefined)
-    await this.invalidateMetadata()
+    await this.invalidateMetadata(task.familyId)
   }
 
   async attach(task: Pick<BackgroundTask, "target">): Promise<"switched" | string> {
@@ -550,7 +555,7 @@ export class BackgroundTasks {
           targetClosed = true
           this.known.delete(task.id)
           this.retained.delete(task.id)
-          await this.invalidateMetadata()
+          await this.invalidateMetadata(task.familyId)
           if (task.kind === "monitor" && task.familyId) await this.releasePool(task, task.familyId)
           removed++
         } catch {

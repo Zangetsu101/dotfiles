@@ -499,7 +499,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     await updateAvailability(visible, revision)
     if (shuttingDown || restoring !== generation) return false
     let pendingAvailability = Promise.resolve()
-    const stop = await tasks.watchMetadata({ subtreeRootId: family.nodeId }, (snapshot) => {
+    const stop = await tasks.watchMetadata({ subtreeRootId: family.nodeId, routingFamilyId: family.familyId }, (snapshot) => {
       if (restoring !== generation || shuttingDown) return
       const direct = snapshot.filter((task) => task.kind === "agent" && task.parentId === family!.nodeId)
       for (const task of direct) {
@@ -738,7 +738,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         await mkdir(mailbox, { recursive: true, mode: 0o700 })
         stops.push(await sharedDirectoryObservation.watch(mailbox, invalidate))
         stops.push(await watchStatusDirectory(agent, invalidate))
-        stops.push(await tasks.watchMetadata({ subtreeRootId: family!.nodeId }, invalidate))
+        stops.push(await tasks.watchMetadata({ subtreeRootId: family!.nodeId, routingFamilyId: family!.familyId }, invalidate))
         deadline = setTimeout(() => { timedOut = true; invalidate() }, (options.pollMs ?? 100) * 100)
         const temporary = join(mailbox, `${id}.tmp`)
         const target = params.force ? await readFile(`${agent.statusFile}.operation`, "utf8").catch((error: NodeJS.ErrnoException) => {

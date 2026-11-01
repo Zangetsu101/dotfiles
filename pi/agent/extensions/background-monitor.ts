@@ -139,7 +139,7 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
     if (!active()) return false
     taskCache = visible
     setBackgroundToolActive(pi, "background_task", visible.some((task) => task.id !== family!.nodeId))
-    const stop = await tasks.watchMetadata({ subtreeRootId }, (visible) => {
+    const stop = await tasks.watchMetadata({ subtreeRootId, routingFamilyId: configuredSubtreeRootId ? undefined : family?.familyId }, (visible) => {
       if (active()) {
         const retained = missingFamily
           ? [...restored.values()].filter((task) => !removedTasks.has(task.id) && !visible.some((live) => live.id === task.id))

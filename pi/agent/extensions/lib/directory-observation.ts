@@ -2,7 +2,7 @@ import { watch, type FSWatcher } from "node:fs"
 import { mkdir, stat } from "node:fs/promises"
 import { basename, resolve } from "node:path"
 
-type Subscription = { listener: () => void; ignored: ReadonlySet<string> }
+type Subscription = { listener: (filename?: string) => void; ignored: ReadonlySet<string> }
 type Directory = {
   path: string
   subscriptions: Set<Subscription>
@@ -17,13 +17,14 @@ const retryDelays = [100, 500, 2_000]
 /**
  * Events are invalidations, not an authoritative record of directory contents.
  * `ignore` names files whose own events a subscriber skips. Deliveries without a
- * filename (initial, sweep, reattach) always reach every subscriber.
+ * filename (initial, sweep, reattach) always reach every subscriber. Listeners
+ * receive the filename when available so they can route scoped invalidations.
  */
 class DirectoryObservation {
   private readonly directories = new Map<string, Directory>()
   private sweep?: ReturnType<typeof setInterval>
 
-  async watch(directory: string, listener: () => void, options: { ignore?: readonly string[] } = {}): Promise<() => void> {
+  async watch(directory: string, listener: (filename?: string) => void, options: { ignore?: readonly string[] } = {}): Promise<() => void> {
     const path = resolve(directory)
     let entry = this.directories.get(path)
     if (!entry) {
@@ -61,13 +62,13 @@ class DirectoryObservation {
   private active(entry: Directory): boolean {
     return this.directories.get(entry.path) === entry && entry.subscriptions.size > 0
   }
-  private deliver(subscription: Subscription): void {
-    try { subscription.listener() } catch (error) { console.error("Directory observation listener failed:", error) }
+  private deliver(subscription: Subscription, filename?: string): void {
+    try { subscription.listener(filename) } catch (error) { console.error("Directory observation listener failed:", error) }
   }
   private notify(entry: Directory, filename?: string): void {
     if (!this.active(entry)) return
     for (const subscription of entry.subscriptions) {
-      if (filename === undefined || !subscription.ignored.has(filename)) this.deliver(subscription)
+      if (filename === undefined || !subscription.ignored.has(filename)) this.deliver(subscription, filename)
     }
   }
   private ensureWatcher(entry: Directory): Promise<void> {

@@ -121,7 +121,7 @@ export default function (pi: ExtensionAPI, options: { tasks?: BackgroundTasks; o
     }
     const refreshProgress = () => { void updateProgress().catch((error) => console.error("background task progress:", error)) }
     ageTimer = setInterval(() => { if (active()) updateUI(ctx, cachedTasks, family.nodeId) }, 5000)
-    const stop = await tasks.watchMetadata({ subtreeRootId: family.nodeId }, (visible) => {
+    const stop = await tasks.watchMetadata({ subtreeRootId: family.nodeId, routingFamilyId: family.familyId }, (visible) => {
       if (active()) {
         visibleTasks = carryProgress(cachedTasks, visible)
         cachedTasks = visibleTasks

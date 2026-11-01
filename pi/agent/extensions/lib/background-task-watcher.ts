@@ -1,10 +1,10 @@
 import { sharedDirectoryObservation } from "./directory-observation.ts"
 import { join } from "node:path"
-import { BackgroundTasks, systemTmux, taskMetadataDirectory, type BackgroundTask, type TaskMetadataOptions, type TaskQuery, type TmuxProcessAdapter } from "./background-task.ts"
+import { familyInvalidationFilename, BackgroundTasks, systemTmux, taskMetadataDirectory, type BackgroundTask, type TaskMetadataOptions, type TaskQuery, type TmuxProcessAdapter } from "./background-task.ts"
 
 const hooks = ["after-new-session", "after-new-window", "after-split-window", "after-set-option", "after-rename-window", "after-rename-session", "after-kill-pane", "window-unlinked", "pane-exited", "pane-died", "session-closed"]
 const quote = (text: string) => `'${text.replaceAll("'", `'"'"'`)}'`
-type Subscription = { query: TaskQuery; listener: (tasks: BackgroundTask[]) => void; signature?: string }
+type Subscription = { query: TaskQuery; listener: (tasks: BackgroundTask[]) => void; signature?: string; resolvedFamilyId?: string }
 
 /** Shares directory invalidations and tmux hooks across task subscribers. */
 export class BackgroundTaskWatcher {
@@ -46,7 +46,7 @@ export class BackgroundTaskWatcher {
       await this.enqueue(async () => {
         if (generation !== this.generation) return
         if (!this.stopObservation) {
-          const stop = await sharedDirectoryObservation.watch(this.directory, () => this.invalidate(generation))
+          const stop = await sharedDirectoryObservation.watch(this.directory, filename => this.invalidate(generation, filename))
           if (generation !== this.generation) { stop(); return }
           this.stopObservation = stop
         }
@@ -84,8 +84,19 @@ export class BackgroundTaskWatcher {
       this.installed.delete(hook)
     }
   }
-  private invalidate(generation: number): void {
+  private invalidate(generation: number, filename?: string): void {
     if (generation !== this.generation) return
+    // Atomic writes only become authoritative on rename. Never treat their
+    // temporary siblings as generic invalidations.
+    if (filename && /^(?:family-[a-f0-9]{64}|invalidation)\.\d+\.[a-z0-9]+\.tmp$/.test(filename)) return
+    if (filename && /^family-[a-f0-9]{64}$/.test(filename)) {
+      const interested = [...this.subscriptions].some(subscription => {
+        const query = subscription.query
+        const family = "familyId" in query ? query.familyId : query.routingFamilyId ?? subscription.resolvedFamilyId
+        return !family || familyInvalidationFilename(family) === filename
+      })
+      if (!interested) return
+    }
     this.dirty = true
     if (this.refreshQueued) return
     this.refreshQueued = true
@@ -104,6 +115,10 @@ export class BackgroundTaskWatcher {
     for (const subscription of this.subscriptions) {
       if (generation !== this.generation) return
       const query = subscription.query
+      if ("subtreeRootId" in query) {
+        // Preserve learned routing after removal; an unknown root stays conservative.
+        subscription.resolvedFamilyId = all.find(task => task.id === query.subtreeRootId || task.rootId === query.subtreeRootId)?.familyId ?? subscription.resolvedFamilyId
+      }
       const scoped = "familyId" in query
         ? all.filter(task => task.familyId === query.familyId)
         : this.tasks.subtree({ id: query.subtreeRootId }, all)

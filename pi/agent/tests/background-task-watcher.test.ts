@@ -7,7 +7,8 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 const exec = promisify(execFile)
 const cleanEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("PI_BACKGROUND_")))
-import { BackgroundTasks } from "../extensions/lib/background-task.ts"
+import { sharedDirectoryObservation } from "../extensions/lib/directory-observation.ts"
+import { familyInvalidationFilename, BackgroundTasks } from "../extensions/lib/background-task.ts"
 import { BackgroundTaskWatcher } from "../extensions/lib/background-task-watcher.ts"
 import { FakeTmuxProcessAdapter } from "./support/background-task-runtime.ts"
 
@@ -15,6 +16,122 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   for (let i = 0; i < 200 && !predicate(); i++) await new Promise(resolve => setTimeout(resolve, 10))
   assert.ok(predicate())
 }
+
+test("known-family metadata mutations do not scan an unrelated subtree watcher", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "task-watcher-routing-"))
+  const tmux = new FakeTmuxProcessAdapter()
+  const owner = new BackgroundTasks(tmux, { metadataDirectory: directory })
+  let calls = 0
+  const watcher = new BackgroundTaskWatcher({ run: async args => { calls++; return tmux.run(args) } }, { metadataDirectory: directory })
+  const dispose = await watcher.watch({ subtreeRootId: "empty-root", routingFamilyId: "other" }, () => {})
+  try {
+    await new Promise(resolve => setTimeout(resolve, 100))
+    const before = calls
+    const task = await owner.create({ kind: "monitor", label: "scoped", familyId: "family/with unsafe names", rootId: "root", cwd: "/tmp", command: "true", args: [] })
+    await owner.setStatus(task, "succeeded")
+    await owner.cleanup([task])
+    await new Promise(resolve => setTimeout(resolve, 100))
+    assert.equal(calls - before, 0)
+  } finally { dispose(); await rm(directory, { recursive: true, force: true }) }
+})
+
+test("unknown subtree roots remain conservative and filename-less events always scan", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "task-watcher-unknown-"))
+  const tmux = new FakeTmuxProcessAdapter()
+  let calls = 0
+  let notify!: (filename?: string) => void
+  t.mock.method(sharedDirectoryObservation, "watch", async (_directory, listener) => { notify = listener; return () => {} })
+  const watcher = new BackgroundTaskWatcher({ run: async args => { calls++; return tmux.run(args) } }, { metadataDirectory: directory })
+  const dispose = await watcher.watch({ subtreeRootId: "unknown" }, () => {})
+  try {
+    let before = calls
+    notify(familyInvalidationFilename("unrelated"))
+    await waitFor(() => calls >= before + 3)
+    before = calls
+    notify()
+    await waitFor(() => calls >= before + 3)
+  } finally { dispose(); await rm(directory, { recursive: true, force: true }) }
+})
+
+test("learned subtree families survive removal and ignore unrelated atomic writes", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "task-watcher-learned-"))
+  const tmux = new FakeTmuxProcessAdapter()
+  const owner = new BackgroundTasks(tmux, { metadataDirectory: directory })
+  const task = await owner.create({ kind: "agent", label: "root", familyId: "family", rootId: "root", cwd: "/tmp", command: "true", args: [] })
+  let notify!: (filename?: string) => void
+  t.mock.method(sharedDirectoryObservation, "watch", async (_directory, listener) => { notify = listener; return () => {} })
+  let calls = 0
+  let latest = 0
+  const watcher = new BackgroundTaskWatcher({ run: async args => { calls++; return tmux.run(args) } }, { metadataDirectory: directory })
+  const dispose = await watcher.watch({ subtreeRootId: task.id }, snapshot => { latest = snapshot.length })
+  try {
+    assert.equal(latest, 1)
+    await owner.setStatus(task, "succeeded")
+    await owner.cleanup([task])
+    notify(familyInvalidationFilename("family"))
+    await waitFor(() => latest === 0)
+    const before = calls
+    notify(familyInvalidationFilename("other"))
+    notify(`${familyInvalidationFilename("family")}.123.abc.tmp`)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(calls, before)
+    notify()
+    await waitFor(() => calls >= before + 3)
+  } finally { dispose(); await rm(directory, { recursive: true, force: true }) }
+})
+
+test("scoped invalidations during a running reconcile deliver the eventual snapshot", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "task-watcher-inflight-"))
+  const tmux = new FakeTmuxProcessAdapter()
+  const owner = new BackgroundTasks(tmux, { metadataDirectory: directory })
+  const task = await owner.create({ kind: "agent", label: "root", familyId: "family", rootId: "root", cwd: "/tmp", command: "true", args: [] })
+  let notify!: (filename?: string) => void
+  t.mock.method(sharedDirectoryObservation, "watch", async (_directory, listener) => { notify = listener; return () => {} })
+  let block = false
+  let release!: () => void
+  let entered!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const started = new Promise<void>(resolve => { entered = resolve })
+  const watcher = new BackgroundTaskWatcher({ run: async args => {
+    const result = await tmux.run(args)
+    if (block && args[0] === "list-panes") { block = false; entered(); await gate }
+    return result
+  } }, { metadataDirectory: directory })
+  let status = ""
+  const dispose = await watcher.watch({ subtreeRootId: "root", routingFamilyId: "family" }, tasks => { status = tasks[0]?.status ?? "" })
+  try {
+    block = true
+    notify(familyInvalidationFilename("family"))
+    await started
+    await owner.setStatus(task, "succeeded")
+    notify(familyInvalidationFilename("family"))
+    release()
+    await waitFor(() => status === "succeeded")
+  } finally { release(); dispose(); await rm(directory, { recursive: true, force: true }) }
+})
+
+test("family routing skips unrelated events but keeps an interested subscriber in a shared watcher", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "task-watcher-mixed-"))
+  const tmux = new FakeTmuxProcessAdapter()
+  const owner = new BackgroundTasks(tmux, { metadataDirectory: directory })
+  let notify!: (filename?: string) => void
+  t.mock.method(sharedDirectoryObservation, "watch", async (_directory, listener) => { notify = listener; return () => {} })
+  let calls = 0
+  const watcher = new BackgroundTaskWatcher({ run: async args => { calls++; return tmux.run(args) } }, { metadataDirectory: directory })
+  const first = await watcher.watch({ familyId: "other" }, () => {})
+  let second: (() => void) | undefined
+  try {
+    const before = calls
+    notify(familyInvalidationFilename("family"))
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(calls, before)
+    let visible = 0
+    second = await watcher.watch({ familyId: "family" }, tasks => { visible = tasks.length })
+    await owner.create({ kind: "agent", label: "new", familyId: "family", rootId: "root", cwd: "/tmp", command: "true", args: [] })
+    notify(familyInvalidationFilename("family"))
+    await waitFor(() => visible === 1)
+  } finally { first(); second?.(); await rm(directory, { recursive: true, force: true }) }
+})
 
 test("watch resolves only after its initial snapshot is delivered", async () => {
   const directory = await mkdtemp(join(tmpdir(), "task-watcher-ready-"))
