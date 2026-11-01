@@ -789,6 +789,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       "Delegate a task to an inspectable Pi agent in its own tmux session. Returns immediately; the parent automatically receives a completion notification when the initial task settles.",
     promptSnippet: "Delegate work to an inspectable Pi agent running in tmux",
     promptGuidelines: [
+      "Implement in the current agent by default. Delegate bounded parallel work when you can name the independent work you will continue, or when the user requests delegation.",
       "Delegated Pi work: use background_agent so the user can inspect it.",
       "Set allowDelegation: true when the child's assignment requires it to spawn agents.",
       ...backgroundLifecycleGuidelines,

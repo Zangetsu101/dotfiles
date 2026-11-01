@@ -12,6 +12,7 @@ test("delegation guidelines define yielding, automatic resumption, and inspectio
   const runtime = new FakePiRuntime()
   await backgroundAgentExtension(runtime.pi)
   const guidelines = runtime.tools.get("background_agent").promptGuidelines as string[]
+  assert.ok(guidelines.includes("Implement in the current agent by default. Delegate bounded parallel work when you can name the independent work you will continue, or when the user requests delegation."))
   const yielding = guidelines.find((line) => line.includes("ending your turn"))
   assert.ok(yielding, "yield must specify ending the turn, not keeping a tool call active")
   assert.match(yielding, /progress update/)
