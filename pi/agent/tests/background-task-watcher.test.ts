@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { execFile } from "node:child_process"
+import { connect } from "node:net"
 import { promisify } from "node:util"
 const exec = promisify(execFile)
 const cleanEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("PI_BACKGROUND_")))
@@ -12,9 +13,24 @@ import { familyInvalidationFilename, BackgroundTasks } from "../extensions/lib/b
 import { BackgroundTaskWatcher } from "../extensions/lib/background-task-watcher.ts"
 import { FakeTmuxProcessAdapter } from "./support/background-task-runtime.ts"
 
-async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let i = 0; i < 200 && !predicate(); i++) await new Promise(resolve => setTimeout(resolve, 10))
-  assert.ok(predicate())
+async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    if (await predicate()) return
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  assert.ok(await predicate())
+}
+
+async function serverStopped(socketPath: string): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    const client = connect(socketPath)
+    client.once("connect", () => { client.destroy(); resolve(false) })
+    client.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "ECONNREFUSED" || error.code === "ENOENT") resolve(true)
+      else if (error.code === "ECONNRESET") resolve(false)
+      else reject(error)
+    })
+  })
 }
 
 test("known-family metadata mutations do not scan an unrelated subtree watcher", async () => {
@@ -336,8 +352,11 @@ test("hooks recover when a server appears and when it is recreated", async t => 
       await waitFor(() => latest.some(item => item.id === task.id))
       await run(["set-option", "-w", "-t", task.target, "@pi_task_label", `external-${cycle}`])
       await waitFor(() => latest.some(item => item.label === `external-${cycle}`))
+      const socketPath = await run(["display-message", "-p", "#{socket_path}"])
       await run(["kill-server"])
-      // Deliberately recreate immediately, without waiting for the old server's invalidation.
+      // kill-server acknowledges SIGTERM before the server stops accepting connections.
+      // Wait for transport shutdown, not for the watcher's old-server invalidation.
+      await waitFor(() => serverStopped(socketPath))
     }
   } finally {
     dispose()
