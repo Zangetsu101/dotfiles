@@ -19,8 +19,6 @@ import {
   BackgroundTasks,
   watchStatusDirectory,
   systemTmux,
-  writeTaskCompletion,
-  taskCompletionStatus,
   type BackgroundTask,
   type TaskStatus,
   type TmuxProcessAdapter,
@@ -28,12 +26,11 @@ import {
 import { familyForContext, familyTaskParent, type TaskFamily } from "./lib/background-family.ts"
 import { taskCheckIns } from "./lib/task-check-in.ts"
 import { backgroundLifecycleGuidelines, backgroundCompletionGuidance } from "./lib/background-prompts.ts"
-import { notifyRunningTask } from "./lib/background-task-check-in.ts"
 import { backgroundAttachCommand } from "./lib/background-attach.ts"
 import { backgroundToolRenderers, registerBackgroundMessages } from "./lib/background-rendering.ts"
 
-import { readAgentProgress, describeAgentProgress } from "./lib/background-progress.ts"
-import { BackgroundAssignment, withMailboxLock } from "./lib/background-assignment.ts"
+import { describeAgentProgress } from "./lib/background-progress.ts"
+import { BackgroundAssignment, ParentAssignment, withMailboxLock } from "./lib/background-assignment.ts"
 import { canMessageBackgroundAgent, setBackgroundToolActive } from "./lib/background-tool-availability.ts"
 
 const execFileAsync = promisify(execFile)
@@ -494,136 +491,63 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
   const monitor = (agent: AgentSession) => {
     if (watchers.has(agent.id)) return
 
-    const activity: BackgroundActivity = { id: `background-agent:${agent.id}`, source: "background_agent", label: agent.label }
-    if (agent.status === "running") pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
-    let settled = agent.status !== "running"
-    let consuming = false
-    let checkingSettled = false
-    let runtimeExit = false
     const subscriptions: Array<() => void> = []
     const watcher = () => { for (const stop of subscriptions) stop() }
     watchers.set(agent.id, watcher)
     const current = generation
     const active = () => !shuttingDown && current === generation && watchers.get(agent.id) === watcher
     const reconcile = (operation: () => Promise<void>) => { if (active()) void operation().catch((error) => console.error("background agent reconciliation:", error)) }
-    const checkSettled = async () => {
-      if (!settled || shuttingDown || checkingSettled) return
-      checkingSettled = true
-      try {
-        if (await tasks.pendingAssignmentCompletionPath(agent)) {
-          await consumeCompletion()
-          return
-        }
-        let completion = await tasks.completion(agent)
-        if (completion && "kind" in completion && completion.kind !== "exit" && !await tasks.isPresent(agent)) {
-          if (existsSync(`${agent.statusFile}.cleanup`)) return
-          completion = { kind: "exit", reason: "agent session disappeared after reporting assignment completion" }
-          await writeTaskCompletion(agent.statusFile, completion)
-        }
-        if (watchers.get(agent.id) !== watcher) return
-        if (completion) {
-          if ("kind" in completion && completion.kind === "exit" && !runtimeExit) {
-            runtimeExit = true
-            settled = false
-            await consumeCompletion()
-            settled = true
-          }
-          return
-        }
-        settled = false
-        agent.status = "running"
-        await tasks.setStatus(agent, "running")
-        if (!active()) return
-        await checkIns.watch(agent.statusFile, () => notifyRunningTask(pi, tasks, agent, () => !settled && active()))
-        if (!active()) return
-        pi.events.emit(BACKGROUND_ACTIVITY_STARTED, activity)
-        await consumeCompletion()
-      } finally {
-        checkingSettled = false
-      }
-    }
-    void checkIns.watch(agent.statusFile, () => notifyRunningTask(pi, tasks, agent, () => !settled && active()))
-    const consumeCompletion = async () => {
-      const completion = await tasks.claimCompletionOrReconcile(agent)
-      if (watchers.get(agent.id) !== watcher) return
-      const progress = completion ? undefined : await readAgentProgress(agent.statusFile).catch((error) => { console.error("background agent progress:", error); return undefined })
-      if (progress?.latest.state === "blocked" && progress.latest.attention && !await tasks.completion(agent)
-        && await readFile(`${agent.statusFile}.attention`, "utf8").catch(() => undefined) !== progress.latest.id) {
-        await withMailboxLock(agent.statusFile, async () => {
-          const marker = `${agent.statusFile}.attention`
-          if (await readFile(marker, "utf8").catch(() => undefined) === progress.latest.id) return
-          if (shuttingDown || watchers.get(agent.id) !== watcher || await tasks.completion(agent)) return
-          await writeFile(marker, progress.latest.id, { mode: 0o600 })
-          if (!active()) return
-          pi.sendMessage({
-            customType: "background-agent-check-in",
-            details: { id: agent.id, label: agent.label, target: agent.target, status: "blocked", progress, summary: describeAgentProgress(progress), attach: backgroundAttachCommand(agent) },
-            content: `Background agent ${agent.id} (${agent.label}) requests attention.\nReported progress: ${describeAgentProgress(progress)}\nUse background_task to inspect it or background_agent_message to help.`,
-            display: true,
-          }, { deliverAs: "steer", triggerTurn: true })
-        })
-      }
-
-      if (!completion || existsSync(`${agent.statusFile}.cleanup`)) return
-
-      const agentCompletion = "kind" in completion
-      const currentCompletion = await tasks.completion(agent)
-      if (!active()) return
-      settled = !agentCompletion || !completion.assignment || Boolean(currentCompletion && "kind" in currentCompletion && currentCompletion.assignment === completion.assignment)
-      runtimeExit = agentCompletion && completion.kind === "exit"
-      if (settled) {
-        checkIns.stop(agent.statusFile)
-        pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
-      }
-      const taskStatus = taskCompletionStatus(completion)
-      const failed = taskStatus === "failed"
-      const terminated = taskStatus === "terminated"
-      let status = "finished its initial task"
-      if (terminated) status = `was terminated${completion.reason ? `: ${completion.reason}` : ""}`
-      else if (agentCompletion && completion.kind === "reported") status = failed ? "reported it could not finish its assignment" : "reported its assignment completed"
-      else if (failed) status = agentCompletion && completion.kind !== "exit" ? "failed with a model error" : agentCompletion && completion.reason ? `runtime failed: ${completion.reason}` : `failed with exit code ${completion.exitCode ?? "unknown"}`
-      if (settled) await Promise.all([
-        tmux.run(["set-option", "-w", "-t", agent.target, "@pi_agent_status", terminated ? "terminated" : failed ? "failed" : "settled"]),
-        tmux.run(["set-option", "-w", "-t", agent.target, "@pi_task_status", taskStatus]),
-      ]).catch(() => undefined)
-
-      if (watchers.get(agent.id) !== watcher) return
-      const summary = `Background agent ${agent.id} (${agent.label}) ${status}.`
-      if (settled) {
-        agent.status = taskStatus
+    const assignment = new ParentAssignment(agent, {
+      tasks, tmux, pi, checkIns, active,
+      current: () => watchers.get(agent.id) === watcher,
+      onStatus: (status) => {
         const cached = agentsCache.find((item) => item.id === agent.id)
-        if (cached) cached.status = taskStatus
+        if (cached) cached.status = status
         pi.events.emit(BACKGROUND_TASK_STATUS_CHANGED, agent)
-      }
-      const attach = backgroundAttachCommand(agent)
-      const output = "output" in completion ? completion.output?.trim() || "(no final output)" : "(no final output)"
+      },
+      onProgress: async (progress) => {
+        if (progress?.latest.state === "blocked" && progress.latest.attention && !await tasks.completion(agent)
+          && await readFile(`${agent.statusFile}.attention`, "utf8").catch(() => undefined) !== progress.latest.id) {
+          await withMailboxLock(agent.statusFile, async () => {
+            const marker = `${agent.statusFile}.attention`
+            if (await readFile(marker, "utf8").catch(() => undefined) === progress.latest.id) return
+            if (shuttingDown || watchers.get(agent.id) !== watcher || await tasks.completion(agent)) return
+            await writeFile(marker, progress.latest.id, { mode: 0o600 })
+            if (!active()) return
+            pi.sendMessage({
+              customType: "background-agent-check-in",
+              details: { id: agent.id, label: agent.label, target: agent.target, status: "blocked", progress, summary: describeAgentProgress(progress), attach: backgroundAttachCommand(agent) },
+              content: `Background agent ${agent.id} (${agent.label}) requests attention.\nReported progress: ${describeAgentProgress(progress)}\nUse background_task to inspect it or background_agent_message to help.`,
+              display: true,
+            }, { deliverAs: "steer", triggerTurn: true })
+          })
+        }
+      },
+      onCompletion: (completion, taskStatus) => {
+        const agentCompletion = "kind" in completion
+        const failed = taskStatus === "failed"
+        const terminated = taskStatus === "terminated"
+        let status = "finished its initial task"
+        if (terminated) status = `was terminated${completion.reason ? `: ${completion.reason}` : ""}`
+        else if (agentCompletion && completion.kind === "reported") status = failed ? "reported it could not finish its assignment" : "reported its assignment completed"
+        else if (failed) status = agentCompletion && completion.kind !== "exit" ? "failed with a model error" : agentCompletion && completion.reason ? `runtime failed: ${completion.reason}` : `failed with exit code ${completion.exitCode ?? "unknown"}`
+        const summary = `Background agent ${agent.id} (${agent.label}) ${status}.`
+        const attach = backgroundAttachCommand(agent)
+        const output = "output" in completion ? completion.output?.trim() || "(no final output)" : "(no final output)"
 
-      if (watchers.get(agent.id) !== watcher) return
-      pi.sendMessage(
-        {
-          customType: "background-agent",
-          details: { summary, label: agent.label, status: taskStatus === "succeeded" ? "completed" : taskStatus, id: agent.id, target: agent.target, output, attach, exitCode: completion.exitCode },
-          content: `${summary}\nAttach with: ${attach}\n\nFinal output:\n${output}\n\n${backgroundCompletionGuidance}`,
-          display: true,
-        },
-        { deliverAs: "steer", triggerTurn: true },
-      )
-    }
-    let dirty = false
-    const consume = async () => {
-      if (!active()) return
-      dirty = true
-      if (consuming) return
-      consuming = true
-      try {
-        do {
-          dirty = false
-          if (settled) await checkSettled()
-          else await consumeCompletion()
-        } while (dirty && active())
-      } finally { consuming = false }
-    }
-    const refresh = () => reconcile(consume)
+        if (watchers.get(agent.id) !== watcher) return
+        pi.sendMessage(
+          {
+            customType: "background-agent",
+            details: { summary, label: agent.label, status: taskStatus === "succeeded" ? "completed" : taskStatus, id: agent.id, target: agent.target, output, attach, exitCode: completion.exitCode },
+            content: `${summary}\nAttach with: ${attach}\n\nFinal output:\n${output}\n\n${backgroundCompletionGuidance}`,
+            display: true,
+          },
+          { deliverAs: "steer", triggerTurn: true },
+        )
+      },
+    })
+    const refresh = () => reconcile(() => assignment.reconcile())
     reconciliations.set(agent.id, refresh)
     // Assignment records publish after status and survive follow-up reset.
     void (async () => {
