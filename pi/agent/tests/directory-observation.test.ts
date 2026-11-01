@@ -202,3 +202,28 @@ test("repeated asynchronous watcher failures cannot create an endless retry loop
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test("ignored files do not notify their subscriber, but other files and the initial delivery still do", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "directory-ignore-"))
+  let ignoring = 0, watching = 0
+  const stopIgnoring = await sharedDirectoryObservation.watch(directory, () => { ignoring++ }, { ignore: ["output.log"] })
+  const stopWatching = await sharedDirectoryObservation.watch(directory, () => { watching++ })
+  try {
+    await writeFile(join(directory, "output.log"), "")
+    await waitForRealIO(() => watching > 1)
+    const [ignoredBefore, watchedBefore] = [ignoring, watching]
+    for (let write = 0; write < 5; write++) await writeFile(join(directory, "output.log"), `frame ${write}`, { flag: "a" })
+    await waitForRealIO(() => watching > watchedBefore)
+    await new Promise(resolve => realSetTimeout(resolve, 50))
+    assert.equal(ignoring, ignoredBefore, "output writes reached the subscriber that ignores them")
+    await writeFile(join(directory, "completion.json"), "{}")
+    await waitForRealIO(() => ignoring > ignoredBefore)
+    let initial = 0
+    const stopInitial = await sharedDirectoryObservation.watch(directory, () => { initial++ }, { ignore: ["output.log", "completion.json"] })
+    stopInitial()
+    assert.equal(initial, 1, "a subscriber must receive its initial delivery whatever it ignores")
+  } finally {
+    stopIgnoring(); stopWatching()
+    await rm(directory, { recursive: true, force: true })
+  }
+})

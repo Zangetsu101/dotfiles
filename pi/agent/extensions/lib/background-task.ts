@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process"
 import { mkdir, mkdtemp, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 import { promisify } from "node:util"
 
 export const taskMetadataDirectory = join(tmpdir(), `pi-task-metadata-${process.getuid?.() ?? "user"}`)
@@ -62,6 +62,11 @@ export const systemTmux: TmuxProcessAdapter = {
     return (await execFileAsync("tmux", args, { encoding: "utf8" })).stdout.trim()
   },
 }
+/** Directory-observation options for a task's status directory: terminal output there carries no task state. */
+export function ignoreTaskOutput(task: Pick<BackgroundTask, "outputFile">): { ignore: string[] } {
+  return { ignore: task.outputFile ? [basename(task.outputFile)] : [] }
+}
+
 export function safeTaskLabel(label: string): string {
   return label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "task"
 }

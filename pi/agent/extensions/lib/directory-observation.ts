@@ -2,7 +2,7 @@ import { watch, type FSWatcher } from "node:fs"
 import { mkdir, stat } from "node:fs/promises"
 import { basename, resolve } from "node:path"
 
-type Subscription = { listener: () => void }
+type Subscription = { listener: () => void; ignored: ReadonlySet<string> }
 type Directory = {
   path: string
   subscriptions: Set<Subscription>
@@ -14,12 +14,16 @@ type Directory = {
 }
 const retryDelays = [100, 500, 2_000]
 
-/** Events are invalidations, not an authoritative record of directory contents. */
+/**
+ * Events are invalidations, not an authoritative record of directory contents.
+ * `ignore` names files whose own events a subscriber skips. Deliveries without a
+ * filename (initial, sweep, reattach) always reach every subscriber.
+ */
 class DirectoryObservation {
   private readonly directories = new Map<string, Directory>()
   private sweep?: ReturnType<typeof setInterval>
 
-  async watch(directory: string, listener: () => void): Promise<() => void> {
+  async watch(directory: string, listener: () => void, options: { ignore?: Iterable<string> } = {}): Promise<() => void> {
     const path = resolve(directory)
     let entry = this.directories.get(path)
     if (!entry) {
@@ -27,7 +31,7 @@ class DirectoryObservation {
       this.directories.set(path, entry)
     }
     const current = entry
-    const subscription = { listener }
+    const subscription = { listener, ignored: new Set(options.ignore) }
     current.subscriptions.add(subscription)
     if (!this.sweep) {
       this.sweep = setInterval(() => {
@@ -60,9 +64,11 @@ class DirectoryObservation {
   private deliver(subscription: Subscription): void {
     try { subscription.listener() } catch (error) { console.error("Directory observation listener failed:", error) }
   }
-  private notify(entry: Directory): void {
+  private notify(entry: Directory, filename?: string): void {
     if (!this.active(entry)) return
-    for (const subscription of entry.subscriptions) this.deliver(subscription)
+    for (const subscription of entry.subscriptions) {
+      if (filename === undefined || !subscription.ignored.has(filename)) this.deliver(subscription)
+    }
   }
   private ensureWatcher(entry: Directory): Promise<void> {
     if (entry.opening) return entry.opening
@@ -87,7 +93,7 @@ class DirectoryObservation {
     entry.watcher?.close()
     const watcher = watch(entry.path, (event, filename) => {
       if (!this.active(entry) || entry.watcher !== watcher) return
-      this.notify(entry)
+      this.notify(entry, filename?.toString())
       if (event !== "rename") return
       if (!filename || filename.toString() === basename(entry.path)) {
         // A self-rename can precede removal completing. Do not reattach to
