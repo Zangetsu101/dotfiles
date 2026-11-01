@@ -1,4 +1,4 @@
-- Before editing Pi extensions, create a dedicated Git worktree and implement there in the current agent by default. Keep the checkout used by the running Pi session unchanged until the changes are ready to deploy.
+- If changes could disrupt running Pi sessions, implement them in a dedicated Git worktree in the current agent by default, leaving the checkout used by those sessions unchanged until deployment.
 - follow conventional commit messages.
 
 ## Agent skills
