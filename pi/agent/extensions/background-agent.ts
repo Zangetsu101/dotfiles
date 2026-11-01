@@ -17,7 +17,7 @@ import {
   BACKGROUND_TASK_REMOVED,
   BACKGROUND_TASK_STATUS_CHANGED,
   BackgroundTasks,
-  ignoreTaskOutput,
+  watchStatusDirectory,
   systemTmux,
   writeTaskCompletion,
   taskCompletionStatus,
@@ -466,7 +466,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       const current = generation
       const reservation = () => {}
       availabilityWatchers.set(agent.id, reservation)
-      const stop = await sharedDirectoryObservation.watch(dirname(agent.statusFile), refreshAvailability, ignoreTaskOutput(agent))
+      const stop = await watchStatusDirectory(agent, refreshAvailability)
       if (shuttingDown || current !== generation || availabilityWatchers.get(agent.id) !== reservation) { stop(); continue }
       availabilityWatchers.set(agent.id, stop)
     }
@@ -671,8 +671,8 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
     reconciliations.set(agent.id, refresh)
     // Assignment records publish after status and survive follow-up reset.
     void (async () => {
-      for (const directory of [dirname(agent.statusFile), `${agent.statusFile}.assignments`]) {
-        const stop = await sharedDirectoryObservation.watch(directory, refresh, ignoreTaskOutput(agent))
+      for (const watch of [() => watchStatusDirectory(agent, refresh), () => sharedDirectoryObservation.watch(`${agent.statusFile}.assignments`, refresh)]) {
+        const stop = await watch()
         if (!active()) { stop(); return }
         subscriptions.push(stop)
       }
@@ -737,7 +737,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       try {
         await mkdir(mailbox, { recursive: true, mode: 0o700 })
         stops.push(await sharedDirectoryObservation.watch(mailbox, invalidate))
-        stops.push(await sharedDirectoryObservation.watch(dirname(agent.statusFile), invalidate, ignoreTaskOutput(agent)))
+        stops.push(await watchStatusDirectory(agent, invalidate))
         stops.push(await tasks.watchMetadata({ subtreeRootId: family!.nodeId }, invalidate))
         deadline = setTimeout(() => { timedOut = true; invalidate() }, (options.pollMs ?? 100) * 100)
         const temporary = join(mailbox, `${id}.tmp`)

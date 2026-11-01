@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process"
 import { mkdir, mkdtemp, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { basename, join } from "node:path"
+import { basename, dirname, join } from "node:path"
+import { sharedDirectoryObservation } from "./directory-observation.ts"
 import { promisify } from "node:util"
 
 export const taskMetadataDirectory = join(tmpdir(), `pi-task-metadata-${process.getuid?.() ?? "user"}`)
@@ -62,9 +63,13 @@ export const systemTmux: TmuxProcessAdapter = {
     return (await execFileAsync("tmux", args, { encoding: "utf8" })).stdout.trim()
   },
 }
-/** Directory-observation options for a task's status directory: terminal output there carries no task state. */
-export function ignoreTaskOutput(task: Pick<BackgroundTask, "outputFile">): { ignore: string[] } {
-  return { ignore: task.outputFile ? [basename(task.outputFile)] : [] }
+/** Watches a task's status directory. Terminal output written there carries no task state, so its events are skipped. */
+export function watchStatusDirectory(
+  task: Pick<BackgroundTask, "statusFile" | "outputFile">,
+  listener: () => void,
+  observation: Pick<typeof sharedDirectoryObservation, "watch"> = sharedDirectoryObservation,
+): Promise<() => void> {
+  return observation.watch(dirname(task.statusFile), listener, { ignore: task.outputFile ? [basename(task.outputFile)] : [] })
 }
 
 export function safeTaskLabel(label: string): string {

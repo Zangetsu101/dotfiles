@@ -23,7 +23,7 @@ class DirectoryObservation {
   private readonly directories = new Map<string, Directory>()
   private sweep?: ReturnType<typeof setInterval>
 
-  async watch(directory: string, listener: () => void, options: { ignore?: Iterable<string> } = {}): Promise<() => void> {
+  async watch(directory: string, listener: () => void, options: { ignore?: readonly string[] } = {}): Promise<() => void> {
     const path = resolve(directory)
     let entry = this.directories.get(path)
     if (!entry) {

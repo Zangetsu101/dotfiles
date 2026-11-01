@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
-import { BackgroundTasks, ignoreTaskOutput, type BackgroundTask } from "./lib/background-task.ts"
+import { BackgroundTasks, watchStatusDirectory, type BackgroundTask } from "./lib/background-task.ts"
 import { familyForContext } from "./lib/background-family.ts"
 
 import { readAgentProgress } from "./lib/background-progress.ts"
@@ -105,7 +105,7 @@ export default function (pi: ExtensionAPI, options: { tasks?: BackgroundTasks; o
           }
           for (const [directory, task] of directories) {
             if (subscriptions.has(directory)) continue
-            const stop = await (options.observation ?? sharedDirectoryObservation).watch(directory, refreshProgress, ignoreTaskOutput(task))
+            const stop = await watchStatusDirectory(task, refreshProgress, options.observation)
             if (!active()) { stop(); return }
             subscriptions.set(directory, stop)
           }
