@@ -1,11 +1,10 @@
 ---
 name: implement
 source: https://github.com/mattpocock/skills/tree/main/skills/engineering/implement
-description: "Implement a piece of work based on a spec or set of tickets."
-disable-model-invocation: true
+description: "Workflow for any code change: features, fixes, refactors, specs, or tickets. Use whenever you are about to edit code."
 ---
 
-Implement the work described by the user in the spec or tickets.
+Implement the work the user described, whether in conversation, a spec, or tickets.
 
 Use /tdd where possible, at pre-agreed seams.
 
