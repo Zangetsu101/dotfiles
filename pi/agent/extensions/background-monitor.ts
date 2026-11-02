@@ -185,7 +185,6 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       pi.events.emit(BACKGROUND_TASK_STATUS_CHANGED, task)
       pi.events.emit(BACKGROUND_ACTIVITY_FINISHED, activity)
       const output = await readOutputTail(task.outputFile, MAX_OUTPUT_CHARS)
-      const failed = completion.status !== "completed"
       const status = completion.status === "cancelled"
         ? `was cancelled${completion.reason ? `: ${completion.reason}` : ""}`
         : completion.status === "failed"
@@ -194,7 +193,6 @@ export default function (pi: ExtensionAPI, options: BackgroundMonitorOptions = {
       const summary = `Background monitor ${task.id} (${task.label}) ${status}.`
       const attach = backgroundAttachCommand(task)
       if (!active()) return
-      if (ctx.hasUI) ctx.ui.notify(summary, failed ? "error" : "info")
       pi.sendMessage({ customType: "background-monitor", details: { summary, label: task.label, status: completion.status === "cancelled" ? "terminated" : completion.status, id: task.id, target: task.target, output: output.trim() || "(no output)", attach, exitCode: completion.exitCode }, content: `${summary}\nAttach with: ${attach}\n\nOutput:\n${output.trim() || "(no output)"}\n\n${backgroundCompletionGuidance}`, display: true }, { deliverAs: "steer", triggerTurn: true })
     }
     const launchConsume = () => {

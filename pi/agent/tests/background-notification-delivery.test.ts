@@ -23,6 +23,7 @@ for (const status of ["completed", "failed"] as const) {
       for (let attempt = 0; attempt < 100 && parent.messages.length === 0; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, 10))
       }
+      assert.deepEqual(parent.notifications, [], "completion should only appear in the expandable status row")
       assert.equal(parent.messages.length, 1)
       assert.equal(parent.messages[0].details.status, status)
       assert.deepEqual(parent.messageOptions[0], { deliverAs: "steer", triggerTurn: true })
