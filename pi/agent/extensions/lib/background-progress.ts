@@ -6,6 +6,7 @@ export type AgentReport = {
   state: "working" | "blocked" | "completed" | "failed"
   help?: string
   attention?: boolean
+  blocker?: "project_trust"
   at: number
   id: string
 }

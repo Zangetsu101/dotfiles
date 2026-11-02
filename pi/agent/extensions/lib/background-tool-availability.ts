@@ -1,8 +1,10 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 
 import type { BackgroundTask, BackgroundTasks } from "./background-task.ts"
+import { readProjectTrustBlocker } from "./background-agent-startup.ts"
 
 export async function canMessageBackgroundAgent(tasks: BackgroundTasks, agent: BackgroundTask): Promise<boolean> {
+  if (await readProjectTrustBlocker(agent.statusFile)) return false
   const completion = await tasks.completion(agent)
   return Boolean(completion && "kind" in completion && completion.kind !== "exit"
     ? await tasks.isPresent(agent)

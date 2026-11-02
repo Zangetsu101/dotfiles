@@ -32,6 +32,7 @@ import { backgroundToolRenderers, registerBackgroundMessages } from "./lib/backg
 import { describeAgentProgress } from "./lib/background-progress.ts"
 import { BackgroundAssignment, ParentAssignment, withMailboxLock } from "./lib/background-assignment.ts"
 import { canMessageBackgroundAgent, setBackgroundToolActive } from "./lib/background-tool-availability.ts"
+import { readProjectTrustBlocker, registerAgentStartup } from "./lib/background-agent-startup.ts"
 
 const execFileAsync = promisify(execFile)
 const STATUS_FILE_ENV = "PI_BACKGROUND_AGENT_STATUS_FILE"
@@ -171,6 +172,7 @@ async function registerChildBridge(pi: ExtensionAPI, statusFile: string, tmux: T
       ])
     },
   })
+  registerAgentStartup(pi, statusFile, now)
   let reminded = false
   pi.on("tool_call", (event) => {
     if (assignment.needsInitialReport && event.toolName !== "background_agent_report") {
@@ -517,7 +519,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
             pi.sendMessage({
               customType: "background-agent-check-in",
               details: { id: agent.id, label: agent.label, target: agent.target, status: "blocked", progress, summary: describeAgentProgress(progress), attach: backgroundAttachCommand(agent) },
-              content: `Background agent ${agent.id} (${agent.label}) requests attention.\nReported progress: ${describeAgentProgress(progress)}\nUse background_task to inspect it or background_agent_message to help.`,
+              content: `Background agent ${agent.id} (${agent.label}) requests attention.\nReported progress: ${describeAgentProgress(progress)}\n${progress.latest.blocker === "project_trust" ? `Attach with: ${backgroundAttachCommand(agent)}\nThe user must answer the trust prompt; do not approve automatically. Messaging is unavailable until startup finishes.` : "Use background_task to inspect it or background_agent_message to help."}`,
               display: true,
             }, { deliverAs: "steer", triggerTurn: true })
           })
@@ -585,8 +587,14 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
       const metadata = agent ? { id: agent.id, label: agent.label, target: agent.target, attach: backgroundAttachCommand(agent) } : {}
       if (!params.message.trim()) return { content: [{ type: "text" as const, text: "Message must not be empty" }], details: { ...metadata, status: "error" } }
       if (!agent) return { content: [{ type: "text" as const, text: "Agent not found in this task subtree. Check the agent ID from the background_agent result." }], details: { status: "not_found" } }
+      const unavailable = async () => {
+        const blocker = await readProjectTrustBlocker(agent.statusFile)
+        return blocker
+          ? { content: [{ type: "text" as const, text: `${blocker.activity}. Attach with: ${backgroundAttachCommand(agent)}. The user must answer the trust prompt; messaging is unavailable until startup finishes.` }], details: { ...metadata, status: "blocked", blocker: "project_trust" } }
+          : { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { ...metadata, status: "not_running" } }
+      }
       const canReceive = () => canMessageBackgroundAgent(tasks, agent)
-      if (!await canReceive()) return { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { ...metadata, status: "not_running" } }
+      if (!await canReceive()) return unavailable()
       const mailbox = `${agent.statusFile}.messages`
       const id = randomUUID()
       const request = join(mailbox, `${id}.request`)
@@ -634,7 +642,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
         })
         if (!queued) {
           await rm(temporary, { force: true })
-          return { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { ...metadata, status: "not_running" } }
+          return unavailable()
         }
         while (!timedOut && !shuttingDown && sending === generation) {
           changed = false
@@ -645,7 +653,7 @@ export default async function (pi: ExtensionAPI, options: BackgroundAgentOptions
             const lateAck = await acknowledged()
             if (lateAck) return lateAck
             await rm(request, { force: true })
-            return { content: [{ type: "text" as const, text: "Agent is no longer running" }], details: { ...metadata, status: "not_running" } }
+            return unavailable()
           }
           if (!changed && !timedOut) await new Promise<void>((resolve) => { wake = resolve })
         }

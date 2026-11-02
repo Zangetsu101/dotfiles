@@ -7,6 +7,22 @@ npm --prefix pi/agent run test:mutation
 
 Mutation testing is opt-in and separate from ordinary checks.
 
+## Background agents waiting for project trust
+
+An agent that opens Pi's project trust selector reports a startup blocker and
+requests its immediate parent's attention, with a `/task attach <id>` command.
+The user must answer the prompt in that agent's pane. Trust is never approved
+automatically. Saved decisions and Pi's normal trust options remain unchanged.
+
+Messaging is unavailable while the startup blocker is present, including force
+messages. It becomes available after `session_start`, whether the user approved
+or declined trust. The agent must still report its own initial activity before
+starting assignment work.
+
+This uses the Pi 1.4 trust context's selector, not terminal-output matching.
+The real-Pi startup tests check that the built-in resolver still uses that
+context and that non-prompting trust decisions produce no attention request.
+
 ## Force messages to background agents
 
 `background_agent_message` normally queues a message without interrupting work.
