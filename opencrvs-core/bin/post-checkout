@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Installed as <repo>/.bare/hooks/post-checkout by `worktree-overlay`.
+#
+# Git has no hook for `git worktree add`, but the checkout it performs fires
+# post-checkout with the new worktree as cwd. It also fires on every ordinary
+# checkout/switch, so worktree-overlay stays silent once the links exist, and
+# a failure here never blocks the checkout.
+"$(dirname "$(readlink -f "$0")")/worktree-overlay" --quiet "$(git rev-parse --show-toplevel)" || true

@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# Give opencrvs-core worktrees the local-only setup that is not in the repo:
+#
+#   - every file under ../overlay/ is symlinked to the same path in the worktree
+#     (CLAUDE.local.md, .claude/settings.local.json, hooks, ...)
+#   - .nx/cache is symlinked to <root>/.nx-cache, one nx cache for all worktrees
+#
+#   worktree-overlay              sweep every worktree of the repo you're in
+#   worktree-overlay <dir> ...    just those worktrees
+#   worktree-overlay --quiet ...  print only what changed
+#
+# <root> is the parent of the bare repo (<root>/.bare). The root itself holds
+# checkouts, so it gets no overlay: a CLAUDE.local.md there would load twice
+# in every checkout below it.
+#
+# The sweep also installs the post-checkout hook, which runs this for the one
+# worktree that `git worktree add` creates, wherever it is (T3's ~/.t3/worktrees
+# included). And it rewrites a managed block in the shared info/exclude so the
+# overlay links never show as untracked, then prunes links to deleted overlay
+# files. Two things switch the hook off silently: core.hooksPath being set
+# (husky's installer does this; the sweep warns), and a branch with no nx.json,
+# which gets the overlay but no cache link.
+set -euo pipefail
+
+HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+OVERLAY=${WORKTREE_OVERLAY_DIR:-$HERE/../overlay}
+OVERLAY=$(cd "$OVERLAY" && pwd)
+
+quiet=
+[ "${1-}" = "--quiet" ] && { quiet=1; shift; }
+say() { [ -n "$quiet" ] || echo "$@"; }
+warn() { echo "warning: $*" >&2; }
+
+COMMON=$(cd "$(git rev-parse --git-common-dir)" && pwd)
+ROOT=$(dirname "$COMMON")
+SHARED="$ROOT/.nx-cache"
+EXCLUDE="$COMMON/info/exclude"
+BEGIN='# >>> worktree-overlay (managed, do not edit)'
+END='# <<< worktree-overlay'
+
+overlay_files() { (cd "$OVERLAY" && find . \( -type f -o -type l \) -printf '%P\n' | sort); }
+
+link_overlay() {
+  local wt=$1 rel src dst
+  while IFS= read -r rel; do
+    src="$OVERLAY/$rel"
+    dst="$wt/$rel"
+    if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then
+      continue
+    elif [ -e "$dst" ] || [ -L "$dst" ]; then
+      warn "$dst exists and is not the overlay's, left alone"
+      continue
+    fi
+    mkdir -p "$(dirname "$dst")"
+    ln -s "$src" "$dst"
+    echo "$dst: linked"
+  done < <(overlay_files)
+}
+
+link_nx_cache() {
+  local wt=$1 cache="$1/.nx/cache"
+  [ -f "$wt/nx.json" ] || return 0
+  [ -L "$cache" ] && return 0
+  mkdir -p "$SHARED"
+  if [ -d "$cache" ]; then
+    # Entries are content-addressed by input hash, so a name collision means
+    # identical contents; --update=none keeps the first copy, never overwrites.
+    find "$cache" -mindepth 1 -maxdepth 1 \( -type d -name 'terminalOutputs' -o -type d -regex '.*/[0-9]+' \) \
+      -exec cp -r --update=none {} "$SHARED/" \;
+    rm -rf "$cache"
+    echo "$wt: nx cache merged into the shared one and linked"
+  else
+    echo "$wt: nx cache linked to the shared one"
+  fi
+  mkdir -p "$wt/.nx"
+  ln -sfn "$SHARED" "$cache"
+}
+
+setup_worktree() {
+  local wt=${1%/}
+  [ "$wt" = "$ROOT" ] && return 0
+  link_overlay "$wt"
+  link_nx_cache "$wt"
+}
+
+if [ $# -gt 0 ]; then
+  for wt in "$@"; do setup_worktree "$wt"; done
+  exit 0
+fi
+
+# --- full sweep
+
+mapfile -t worktrees < <(git worktree list --porcelain | awk '/^worktree /{print substr($0, 10)}' | grep -vxF "$COMMON")
+
+# Prune links to overlay files that no longer exist. The previous managed
+# block lists every path the overlay used to own.
+mkdir -p "$(dirname "$EXCLUDE")"
+touch "$EXCLUDE"
+previous=$(sed -n "\|^$BEGIN\$|,\|^$END\$|{\|^/|s|^/||p}" "$EXCLUDE")
+while IFS= read -r rel; do
+  [ -n "$rel" ] && [ ! -e "$OVERLAY/$rel" ] && [ ! -L "$OVERLAY/$rel" ] || continue
+  for wt in "${worktrees[@]}"; do
+    dst="$wt/$rel"
+    if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$OVERLAY/$rel" ]; then
+      rm "$dst"
+      echo "$dst: pruned"
+    fi
+  done
+done <<<"$previous"
+
+{
+  sed "\|^$BEGIN\$|,\|^$END\$|d" "$EXCLUDE"
+  echo "$BEGIN"
+  overlay_files | sed 's|^|/|'
+  echo "$END"
+} >"$EXCLUDE.tmp"
+mv "$EXCLUDE.tmp" "$EXCLUDE"
+
+for wt in "${worktrees[@]}"; do setup_worktree "$wt"; done
+
+hook="$COMMON/hooks/post-checkout"
+mkdir -p "$COMMON/hooks"
+if [ -e "$hook" ] && [ ! -L "$hook" ]; then
+  warn "$hook exists and is not ours, left alone"
+elif [ "$(readlink "$hook" 2>/dev/null)" != "$HERE/post-checkout" ]; then
+  ln -sfn "$HERE/post-checkout" "$hook"
+  echo "post-checkout hook installed"
+fi
+
+if hp=$(git config core.hooksPath 2>/dev/null); then
+  warn "core.hooksPath is set to '$hp', so $hook will not run"
+fi
+
+say "overlay: $OVERLAY ($(overlay_files | wc -l) files), ${#worktrees[@]} worktrees"
+say "shared nx cache: $SHARED"

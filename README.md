@@ -11,6 +11,7 @@
 | Claude Code           | `claude/`                |
 | Pi                    | `pi/agent/`              |
 | Agent-agnostic config | `agents/`                |
+| opencrvs-core         | `opencrvs-core/`         |
 
 ## Tools
 
@@ -65,6 +66,12 @@ ln -s ~/.dotfiles/agents/skills ~/.claude/skills
 npm --prefix ~/.dotfiles/pi/agent install
 git -C ~/.dotfiles config core.hooksPath .githooks
 ```
+
+`opencrvs-core/` holds local-only setup for the opencrvs-core worktrees. Run
+`~/.dotfiles/opencrvs-core/bin/worktree-overlay` once from inside the repo. It
+links `overlay/` into every worktree and installs a `post-checkout` hook, so new
+worktrees get the overlay too. Its header explains the details; tests are in
+`opencrvs-core/test/`.
 
 The pre-commit hook runs Pi tests, type checking, and dependency validation when
 `pi/agent/` has staged changes. Stage or stash all changes in that directory first;
