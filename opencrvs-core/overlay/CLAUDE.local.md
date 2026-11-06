@@ -52,7 +52,3 @@ Run every task via `nx run` (or `lerna run`, an nx front-end) so nx resolves its
 ### Scratch folder
 
 `/home/tameem/projects/opencrvs-core/.scratch/` holds local notes, specs and temporary scripts. All worktrees share this folder.
-
-### Domain docs
-
-`CONTEXT.md` and `docs/adr/` at the checkout root, tracked on `develop`. See `docs/agents/domain.md`.
