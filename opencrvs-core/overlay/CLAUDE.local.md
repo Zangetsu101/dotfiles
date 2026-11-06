@@ -49,13 +49,9 @@ Run every task via `nx run` (or `lerna run`, an nx front-end) so nx resolves its
 
 ## Agent skills
 
-### Issue tracker
+### Scratch folder
 
-Issues are tracked as local Markdown files under `/home/tameem/projects/opencrvs-core/.scratch/`, shared across worktrees. Structured operations use the `local-issue-tracker` skill. The CLI resolves its root to the nearest `.git`, and every worktree has one, so every call must pass `--root /home/tameem/projects/opencrvs-core` or it creates a private tracker. See `docs/agents/issue-tracker.md` (in `/home/tameem/projects/opencrvs-core/core-develop` if this branch lacks it).
-
-### Triage labels
-
-The canonical local triage vocabulary is used. See `docs/agents/triage-labels.md` (in `/home/tameem/projects/opencrvs-core/core-develop` if this branch lacks it).
+`/home/tameem/projects/opencrvs-core/.scratch/` holds local notes, specs and temporary scripts. All worktrees share this folder.
 
 ### Domain docs
 
