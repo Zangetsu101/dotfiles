@@ -1,5 +1,9 @@
 # Coding standards
 
+## Events
+
+- Prefer event subscriptions over polling when the system provides them. Use polling when events are unavailable or unreliable.
+
 ## Commit messages
 
 - Use Conventional Commits.
