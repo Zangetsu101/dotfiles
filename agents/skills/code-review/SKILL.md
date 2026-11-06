@@ -26,7 +26,7 @@ Confirm the selected diff is non-empty. Stop on a bad ref or empty diff.
 
 Look in this order:
 
-1. For committed mode, issue references in the selected commit messages. Resolve them using `docs/agents/issue-tracker.md` if available; otherwise, continue to another spec source.
+1. For committed mode, issue references in the selected commit messages.
 2. A path supplied by the user.
 3. A file under `docs/`, `specs/`, or `.scratch/` matching the branch or feature.
 4. Ask the user where the spec is.
