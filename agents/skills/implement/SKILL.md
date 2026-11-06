@@ -14,6 +14,6 @@ When changing logic or its behavioral tests, check for an existing mutation-test
 
 Once the implementation passes, use /deslop to clean the diff. Rerun the affected checks after its edits.
 
-Then use /code-review to review the cleaned work.
+Commit the cleaned work to the current branch.
 
-Commit your work to the current branch.
+Then use /code-review to review the committed work.
