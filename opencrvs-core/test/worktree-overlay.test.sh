@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests bin/worktree-overlay against a throwaway bare repo + worktrees.
+# Tests bin/worktree-overlay against a throwaway repo + linked worktrees.
 #   opencrvs-core/test/worktree-overlay.test.sh
 set -uo pipefail
 
@@ -22,18 +22,15 @@ setup() {
   echo "local instructions" >"$T/overlay/CLAUDE.local.md"
   echo "#!/bin/sh" >"$T/overlay/.claude/hooks/guard.sh"
 
-  git init -q --bare "$T/root/.bare"
   local seed="$T/seed"
   git init -q -b develop "$seed"
   echo '{}' >"$seed/nx.json"
   printf '.claude/*\n!.claude/hooks/\n.nx\n' >"$seed/.gitignore"
   git -C "$seed" add -A && git -C "$seed" -c user.name=t -c user.email=t@t commit -qm seed
-  git -C "$seed" push -q "$T/root/.bare" develop
-  # The root is itself a linked worktree (the stub), holding .bare and checkouts.
-  git -C "$T/root/.bare" worktree add -q --detach "$T/stub" develop 2>/dev/null
-  mv "$T/stub/.git" "$T/root/.git" && rm -rf "$T/stub"
-  git -C "$T/root" worktree repair 2>/dev/null
-  git -C "$T/root/.bare" worktree add -q "$T/root/a" develop 2>/dev/null
+  # The main worktree holds the git dir. Linked worktrees are next to it.
+  git clone -q "$seed" "$T/root/main"
+  git -C "$T/root/main" switch -q --detach
+  git -C "$T/root/main" worktree add -q "$T/root/a" develop 2>/dev/null
   (cd "$T/root/a" && "$SCRIPT" >/dev/null)   # sweep: installs the hook
 }
 teardown() { rm -rf "$T"; unset WORKTREE_OVERLAY_DIR; }
@@ -44,11 +41,13 @@ setup
 check "sweep links overlay file" [ "$(link_of "$T/root/a/CLAUDE.local.md")" = "$T/overlay/CLAUDE.local.md" ]
 check "sweep links nested overlay file" [ "$(link_of "$T/root/a/.claude/hooks/guard.sh")" = "$T/overlay/.claude/hooks/guard.sh" ]
 check "sweep links nx cache" [ "$(link_of "$T/root/a/.nx/cache")" = "$T/root/.nx-cache" ]
-check "sweep skips the root worktree" [ ! -e "$T/root/CLAUDE.local.md" ]
+check "sweep links the main worktree" [ "$(link_of "$T/root/main/CLAUDE.local.md")" = "$T/overlay/CLAUDE.local.md" ]
+check "excluded: main worktree status clean" [ -z "$(git -C "$T/root/main" status --porcelain)" ]
+check "nothing linked into the root" [ ! -e "$T/root/CLAUDE.local.md" ]
 check "excluded: worktree status clean" [ -z "$(git -C "$T/root/a" status --porcelain)" ]
-check "hook installed" [ -L "$T/root/.bare/hooks/post-checkout" ]
+check "hook installed" [ -L "$T/root/main/.git/hooks/post-checkout" ]
 check "sweep is idempotent and quiet" [ -z "$(cd "$T/root/a" && "$SCRIPT" --quiet)" ]
-check "one managed exclude block after reruns" [ "$(grep -c '>>> worktree-overlay' "$T/root/.bare/info/exclude")" = 1 ]
+check "one managed exclude block after reruns" [ "$(grep -c '>>> worktree-overlay' "$T/root/main/.git/info/exclude")" = 1 ]
 teardown
 
 # --- a branch without nx.json gets the overlay but no cache link
@@ -87,7 +86,7 @@ setup
 rm "$T/overlay/.claude/hooks/guard.sh"
 (cd "$T/root/a" && "$SCRIPT" >/dev/null)
 check "stale link pruned" [ ! -L "$T/root/a/.claude/hooks/guard.sh" ]
-check "stale exclude dropped" bash -c '! grep -q guard.sh "$1"' _ "$T/root/.bare/info/exclude"
+check "stale exclude dropped" bash -c '! grep -q guard.sh "$1"' _ "$T/root/main/.git/info/exclude"
 teardown
 
 # --- merges a private nx cache into the shared one

@@ -9,9 +9,8 @@
 #   worktree-overlay <dir> ...    just those worktrees
 #   worktree-overlay --quiet ...  print only what changed
 #
-# <root> is the parent of the bare repo (<root>/.bare). The root itself holds
-# checkouts, so it gets no overlay: a CLAUDE.local.md there would load twice
-# in every checkout below it.
+# <root> is the parent folder of the main worktree. The main worktree holds
+# the git dir, and the linked worktrees are next to it in <root>.
 #
 # The sweep also installs the post-checkout hook, which runs this for the one
 # worktree that `git worktree add` creates, wherever it is (T3's ~/.t3/worktrees
@@ -32,7 +31,8 @@ say() { [ -n "$quiet" ] || echo "$@"; }
 warn() { echo "warning: $*" >&2; }
 
 COMMON=$(cd "$(git rev-parse --git-common-dir)" && pwd)
-ROOT=$(dirname "$COMMON")
+MAIN=$(git worktree list --porcelain | awk '/^worktree /{print substr($0, 10); exit}')
+ROOT=$(dirname "$MAIN")
 SHARED="$ROOT/.nx-cache"
 EXCLUDE="$COMMON/info/exclude"
 BEGIN='# >>> worktree-overlay (managed, do not edit)'
@@ -78,7 +78,6 @@ link_nx_cache() {
 
 setup_worktree() {
   local wt=${1%/}
-  [ "$wt" = "$ROOT" ] && return 0
   link_overlay "$wt"
   link_nx_cache "$wt"
 }
@@ -90,7 +89,7 @@ fi
 
 # --- full sweep
 
-mapfile -t worktrees < <(git worktree list --porcelain | awk '/^worktree /{print substr($0, 10)}' | grep -vxF "$COMMON")
+mapfile -t worktrees < <(git worktree list --porcelain | awk '/^worktree /{print substr($0, 10)}')
 
 # Prune links to overlay files that no longer exist. The previous managed
 # block lists every path the overlay used to own.

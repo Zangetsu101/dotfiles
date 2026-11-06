@@ -2,7 +2,7 @@
 
 This file isn't tracked by the repo. It's a symlink into `~/.dotfiles/opencrvs-core/overlay/`, which `worktree-overlay` creates in every worktree. Edit the file there.
 
-The repo is a bare clone at `/home/tameem/projects/opencrvs-core/.bare`. Checkouts are linked worktrees, either under `/home/tameem/projects/opencrvs-core/` (`core-develop` holds the `mul-local-env` branch, `core-release`, feature dirs) or wherever T3 creates them.
+The main worktree is `/home/tameem/projects/opencrvs-core/develop`. Its `.git` folder holds the repo. The other checkouts are linked worktrees, either next to `develop` in `/home/tameem/projects/opencrvs-core/` (`core-develop` holds the `mul-local-env` branch, `core-release`, feature dirs) or wherever T3 creates them.
 
 ## Local environments
 
@@ -21,10 +21,10 @@ pnpm dev --only-services       # this environment: secrets, slot, provisioning, 
 
 ### Slots in this layout
 
-Every checkout is a _linked_ worktree (`.bare` is the common git dir), so none of them is the primary one. Consequences:
+`develop` is the primary worktree. All other checkouts are _linked_ worktrees. Consequences:
 
-- Slot 0 is reserved for the _default environment_ (the primary worktree without `--env`). It never exists here, so slots run 1–5: **5 concurrent environments, not 6.**
-- Every environment therefore gets derived identifiers (`events_<name>`, its own ES prefix and bucket).
+- `develop` without `--env` is the _default environment_. It holds slot 0 and keeps the `events` database, the `events` ES prefix and the `ocrvs` bucket. This applies only when the `develop` branch has the dev CLI.
+- Linked worktrees use slots 1–5 and get derived identifiers (`events_<name>`, their own ES prefix and bucket).
 
 Slots follow registration order rather than directory name, so read an environment's ports with `pnpm env:lookup` instead of assuming them.
 

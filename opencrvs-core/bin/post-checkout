@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installed as <repo>/.bare/hooks/post-checkout by `worktree-overlay`.
+# Installed as <git common dir>/hooks/post-checkout by `worktree-overlay`.
 #
 # Git has no hook for `git worktree add`, but the checkout it performs fires
 # post-checkout with the new worktree as cwd. It also fires on every ordinary
