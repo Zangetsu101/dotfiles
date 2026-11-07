@@ -51,5 +51,6 @@
   "autoMemoryEnabled": false,
   "skipDangerousModePermissionPrompt": true,
   "editorMode": "vim",
-  "voiceEnabled": true
+  "voiceEnabled": true,
+  "syncClaudeAiSkills": false
 }
