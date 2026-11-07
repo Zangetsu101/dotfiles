@@ -1,18 +1,19 @@
 vim.o.termguicolors = true
 
 return {
-  'navarasu/onedark.nvim',
-  config = true,
-  init = function()
-    vim.cmd.colorscheme('onedark')
-  end,
+  'folke/tokyonight.nvim',
+  lazy = false,
+  priority = 1000,
   opts = {
+    style = 'night',
     transparent = true,
-    lualine = {
-      transparent = true
+    styles = {
+      sidebars = 'transparent',
+      floats = 'transparent',
     },
-    diagnostics = {
-      background = false
-    }
-  }
+  },
+  config = function(_, opts)
+    require('tokyonight').setup(opts)
+    vim.cmd.colorscheme('tokyonight-night')
+  end,
 }
