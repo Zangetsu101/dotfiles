@@ -4,6 +4,10 @@
 
 - Prefer event subscriptions over polling when the system provides them. Use polling when events are unavailable or unreliable.
 
+## React
+
+- When the installed React version and renderer support `useEffectEvent`, prefer it over `useCallback` for callbacks that belong to Effects and need the latest props or state without restarting the Effect.
+
 ## Commit messages
 
 - Use Conventional Commits.
