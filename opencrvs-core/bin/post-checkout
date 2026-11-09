@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
-# Installed as <git common dir>/hooks/post-checkout by `worktree-overlay`.
+# Installed by `worktree-overlay`: at <git common dir>/hooks/post-checkout, and
+# at <core.hooksPath>/post-checkout in every worktree when that path is relative.
 #
 # Git has no hook for `git worktree add`, but the checkout it performs fires
 # post-checkout with the new worktree as cwd. It also fires on every ordinary
 # checkout/switch, so worktree-overlay stays silent once the links exist, and
 # a failure here never blocks the checkout.
-"$(dirname "$(readlink -f "$0")")/worktree-overlay" --quiet "$(git rev-parse --show-toplevel)" || true
+top=$(git rev-parse --show-toplevel)
+"$(dirname "$(readlink -f "$0")")/worktree-overlay" --quiet "$top" || true
+
+# The old HEAD ($1) is the null SHA only for a new worktree (or a clone).
+# Then install the dependencies. A branch switch does not install.
+if [[ ${1-} =~ ^0+$ ]] && [ -f "$top/pnpm-lock.yaml" ]; then
+  echo "post-checkout: new worktree, running pnpm install in $top" >&2
+  (cd "$top" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
+    pnpm install --frozen-lockfile --prefer-offline) ||
+    echo "warning: pnpm install failed in $top, run it by hand" >&2
+fi
+exit 0

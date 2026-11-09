@@ -16,9 +16,15 @@
 # worktree that `git worktree add` creates, wherever it is (T3's ~/.t3/worktrees
 # included). And it rewrites a managed block in the shared info/exclude so the
 # overlay links never show as untracked, then prunes links to deleted overlay
-# files. Two things switch the hook off silently: core.hooksPath being set
-# (husky's installer does this; the sweep warns), and a branch with no nx.json,
-# which gets the overlay but no cache link.
+# files. A branch with no nx.json gets the overlay but no cache link.
+#
+# Where the hook goes depends on core.hooksPath:
+#
+#   - not set: <git common dir>/hooks/post-checkout
+#   - relative (husky sets .husky/): git looks for hooks in the worktree that
+#     runs the git command, so every worktree gets a link at
+#     <hooksPath>/post-checkout. Then `git worktree add` works from any of them.
+#   - absolute: the hook is not installed, and the sweep warns.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
@@ -76,10 +82,35 @@ link_nx_cache() {
   ln -sfn "$SHARED" "$cache"
 }
 
+# Prints the hook path relative to the worktree when core.hooksPath is relative.
+hook_rel() {
+  local hp
+  hp=$(git -C "$1" config --type=path core.hooksPath 2>/dev/null) || return 1
+  [ "${hp#/}" = "$hp" ] || return 1
+  hp=${hp#./}
+  echo "${hp%/}/post-checkout"
+}
+
+link_hook() {
+  local wt=$1 rel dst
+  rel=$(hook_rel "$wt") || return 0
+  dst="$wt/$rel"
+  if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$HERE/post-checkout" ]; then
+    return 0
+  elif [ -e "$dst" ] || [ -L "$dst" ]; then
+    warn "$dst exists and is not ours, left alone"
+    return 0
+  fi
+  mkdir -p "$(dirname "$dst")"
+  ln -s "$HERE/post-checkout" "$dst"
+  echo "$dst: hook linked"
+}
+
 setup_worktree() {
   local wt=${1%/}
   link_overlay "$wt"
   link_nx_cache "$wt"
+  link_hook "$wt"
 }
 
 if [ $# -gt 0 ]; then
@@ -111,6 +142,7 @@ done <<<"$previous"
   sed "\|^$BEGIN\$|,\|^$END\$|d" "$EXCLUDE"
   echo "$BEGIN"
   overlay_files | sed 's|^|/|'
+  if rel=$(hook_rel "$MAIN"); then echo "/$rel"; fi
   echo "$END"
 } >"$EXCLUDE.tmp"
 mv "$EXCLUDE.tmp" "$EXCLUDE"
@@ -126,8 +158,8 @@ elif [ "$(readlink "$hook" 2>/dev/null)" != "$HERE/post-checkout" ]; then
   echo "post-checkout hook installed"
 fi
 
-if hp=$(git config core.hooksPath 2>/dev/null); then
-  warn "core.hooksPath is set to '$hp', so $hook will not run"
+if hp=$(git config --type=path core.hooksPath 2>/dev/null) && ! hook_rel "$MAIN" >/dev/null; then
+  warn "core.hooksPath is the absolute path '$hp', so the post-checkout hook will not run"
 fi
 
 say "overlay: $OVERLAY ($(overlay_files | wc -l) files), ${#worktrees[@]} worktrees"

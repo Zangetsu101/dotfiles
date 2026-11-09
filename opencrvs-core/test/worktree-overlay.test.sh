@@ -6,6 +6,7 @@ set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 SCRIPT="$HERE/../bin/worktree-overlay"
 fails=0
+ORIG_PATH=$PATH
 
 # Isolate from the user's git config (a global core.hooksPath would disable the hook).
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
@@ -21,10 +22,16 @@ setup() {
   mkdir -p "$T/overlay/.claude/hooks"
   echo "local instructions" >"$T/overlay/CLAUDE.local.md"
   echo "#!/bin/sh" >"$T/overlay/.claude/hooks/guard.sh"
+  # A fake pnpm that logs where it ran, so no test runs a real install.
+  mkdir -p "$T/bin"
+  printf '#!/bin/sh\necho "$PWD $*" >>"%s"\n' "$T/pnpm.log" >"$T/bin/pnpm"
+  chmod +x "$T/bin/pnpm"
+  PATH="$T/bin:$ORIG_PATH"
 
   local seed="$T/seed"
   git init -q -b develop "$seed"
   echo '{}' >"$seed/nx.json"
+  touch "$seed/pnpm-lock.yaml"
   printf '.claude/*\n!.claude/hooks/\n.nx\n' >"$seed/.gitignore"
   git -C "$seed" add -A && git -C "$seed" -c user.name=t -c user.email=t@t commit -qm seed
   # The main worktree holds the git dir. Linked worktrees are next to it.
@@ -33,7 +40,7 @@ setup() {
   git -C "$T/root/main" worktree add -q "$T/root/a" develop 2>/dev/null
   (cd "$T/root/a" && "$SCRIPT" >/dev/null)   # sweep: installs the hook
 }
-teardown() { rm -rf "$T"; unset WORKTREE_OVERLAY_DIR; }
+teardown() { rm -rf "$T"; unset WORKTREE_OVERLAY_DIR; PATH=$ORIG_PATH; }
 link_of() { readlink "$1" 2>/dev/null; }
 
 # --- sweep links an existing worktree
@@ -66,6 +73,29 @@ git -C "$T/root/a" worktree add -q -b feat "$T/elsewhere/feat" 2>/dev/null
 check "new worktree outside root gets overlay" [ "$(link_of "$T/elsewhere/feat/CLAUDE.local.md")" = "$T/overlay/CLAUDE.local.md" ]
 check "new worktree outside root gets nx cache" [ "$(link_of "$T/elsewhere/feat/.nx/cache")" = "$T/root/.nx-cache" ]
 check "new worktree status clean" [ -z "$(git -C "$T/elsewhere/feat" status --porcelain)" ]
+teardown
+
+# --- a relative core.hooksPath (husky) gets a hook link in every worktree
+setup
+git -C "$T/root/main" config core.hooksPath .husky/
+(cd "$T/root/a" && "$SCRIPT" >/dev/null)
+check "hooksPath: hook linked in main worktree" [ "$(link_of "$T/root/main/.husky/post-checkout")" = "$(readlink -f "$HERE/../bin/post-checkout")" ]
+check "hooksPath: hook linked in linked worktree" [ -L "$T/root/a/.husky/post-checkout" ]
+check "hooksPath: hook excluded, status clean" [ -z "$(git -C "$T/root/a" status --porcelain)" ]
+git -C "$T/root/a" worktree add -q -b h "$T/root/h" 2>/dev/null
+check "hooksPath: worktree add from a linked worktree gets overlay" [ -L "$T/root/h/CLAUDE.local.md" ]
+check "hooksPath: new worktree gets the hook link too" [ -L "$T/root/h/.husky/post-checkout" ]
+out=$(cd "$T/root/a" && "$SCRIPT" 2>&1)
+check "hooksPath: relative path gives no warning" bash -c '! grep -q hooksPath <<<"$1"' _ "$out"
+teardown
+
+# --- pnpm install runs for a new worktree only
+setup
+git -C "$T/root/a" worktree add -q -b p "$T/root/p" 2>/dev/null
+check "new worktree runs pnpm install" grep -qx "$T/root/p install --frozen-lockfile --prefer-offline" "$T/pnpm.log"
+git -C "$T/root/p" switch -q -c p2 2>/dev/null
+git -C "$T/root/p" switch -q p 2>/dev/null
+check "branch switch does not run pnpm install" [ "$(wc -l <"$T/pnpm.log")" = 1 ]
 teardown
 
 # --- never clobbers a real file

@@ -39,7 +39,7 @@ Slots follow registration order rather than directory name, so read an environme
 
 Every worktree's `.nx/cache` is a symlink to `/home/tameem/projects/opencrvs-core/.nx-cache/`, so a target built in one worktree replays in the others. `.nx/workspace-data` stays private to each worktree; it holds the project graph and daemon state.
 
-A new worktree is linked by the `post-checkout` hook. After `nx reset`, which removes the symlink and silently drops that worktree back to a private cache, re-run `~/.dotfiles/opencrvs-core/bin/worktree-overlay`. Its header covers the mechanics.
+A new worktree is linked by the `post-checkout` hook, which also runs `pnpm install` for it. Because `core.hooksPath` is `.husky/`, each worktree has an excluded `.husky/post-checkout` link to the hook. After `nx reset`, which removes the symlink and silently drops that worktree back to a private cache, re-run `~/.dotfiles/opencrvs-core/bin/worktree-overlay`. Its header covers the mechanics.
 
 Hits come between worktrees on the same or nearly the same commit; diverged branches correctly miss. Before calling the cache broken, build a target in one worktree, run it in another, and look for `[local cache]`.
 
