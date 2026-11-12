@@ -11,4 +11,3 @@ Write everything a person reads (chat replies, PRs, issues, commits, code commen
 - Break up a run of three or more nouns with prepositions: "the error in validation of the event config", not "event config validation error". Use domain terms from `CONTEXT.md` as they are written.
 - Do not use nouns as verbs. Write "open a PR for this", not "PR this". Common verbs such as "log", "test" and "merge" are fine.
 - Use the common phrase, not the clever or rare one. Do not use metaphors or dash asides.
-

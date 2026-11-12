@@ -6,6 +6,7 @@
 
 ## React
 
+- Prefer `ReactNode` over `() => ReactNode`. Use render props when the caller needs to supply data to render the content.
 - When the installed React version and renderer support `useEffectEvent`, prefer it over `useCallback` for callbacks that belong to Effects and need the latest props or state without restarting the Effect.
 
 ## Commit messages
