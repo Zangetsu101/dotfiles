@@ -1,10 +1,18 @@
 ---
 name: implement
 source: https://github.com/mattpocock/skills/tree/main/skills/engineering/implement
-description: "Implement a non-trivial code change, whether from conversation, a spec, or tickets. When you skip this for a trivial change, tell the user."
+description: "Implement any code change, such as a feature or a fix, whether it comes from a plain request in chat, a spec, or tickets."
 ---
 
 Implement the work the user described.
+
+First, check the size of the change. A change is small when it meets all of these conditions:
+
+- It changes logic in at most one place, or it is a mechanical change such as a rename or a move.
+- It keeps stored data, schemas, public interfaces, and dependencies as they are.
+- Existing tests cover the behavior that it changes.
+
+For a small change, make the change, tell the user that you used the short path of this skill, and stop. For all other changes, continue with the steps below.
 
 Use /tdd where possible, at pre-agreed seams.
 
