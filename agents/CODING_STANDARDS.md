@@ -4,6 +4,10 @@
 
 - Prefer event subscriptions over polling when the system provides them. Use polling when events are unavailable or unreliable.
 
+## Performance
+
+- Run independent async operations concurrently. Use `Promise.all` when all must succeed, or `Promise.allSettled` when every outcome is needed.
+
 ## React
 
 - Move render helpers into module-level components with explicit props when they represent a named UI element, such as a chip, row, card, field, or section, especially when they own interaction, conditional rendering, or styling. Keep helpers inline when they only format a value or assemble a small markup fragment.
