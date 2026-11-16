@@ -7,3 +7,5 @@
   co = checkout
 [core]
 	editor = nvim
+[include]
+  path = ~/.dotfiles/git/config.local

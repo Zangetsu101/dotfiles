@@ -81,4 +81,7 @@ Git's `--no-verify` option bypasses the hook.
 Put machine- or employer-specific Bash settings in `bash/bashrc.local`;
 the shared Bash configuration loads this gitignored file when present.
 
+Put machine-specific Git settings in `git/config.local`; the shared Git
+configuration includes this gitignored file when present.
+
 > `claude/skills` is itself a symlink to `agents/skills/`, so Claude Code and any other agent can share the same skills.
