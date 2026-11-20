@@ -11,10 +11,21 @@ top=$(git rev-parse --show-toplevel)
 
 # The old HEAD ($1) is the null SHA only for a new worktree (or a clone).
 # Then install the dependencies. A branch switch does not install.
+#
+# The install runs detached in the background, so `git worktree add` returns
+# at once. The hook closes stdin, stdout and stderr for the install, because a
+# caller that reads the hook output through a pipe waits for the pipe to close.
+# The log goes to the git dir of the worktree, so it is not in `git status`.
+# The log ends with "pnpm install: done" or "pnpm install: failed".
 if [[ ${1-} =~ ^0+$ ]] && [ -f "$top/pnpm-lock.yaml" ]; then
-  echo "post-checkout: new worktree, running pnpm install in $top" >&2
-  (cd "$top" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
-    pnpm install --frozen-lockfile --prefer-offline) ||
-    echo "warning: pnpm install failed in $top, run it by hand" >&2
+  log="$(git rev-parse --absolute-git-dir)/pnpm-install.log"
+  echo "post-checkout: new worktree, pnpm install runs in the background, log: $log" >&2
+  cd "$top" || exit 0
+  env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE setsid bash -c '
+    if pnpm install --frozen-lockfile --prefer-offline; then
+      echo "pnpm install: done"
+    else
+      echo "pnpm install: failed, run it by hand"
+    fi' </dev/null >"$log" 2>&1 &
 fi
 exit 0

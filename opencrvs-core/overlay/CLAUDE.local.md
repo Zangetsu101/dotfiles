@@ -4,6 +4,8 @@ This file isn't tracked by the repo. It's a symlink into `~/.dotfiles/opencrvs-c
 
 The main worktree is `/home/tameem/projects/opencrvs-core/develop`. Its `.git` folder holds the repo. The other checkouts are linked worktrees, either next to `develop` in `/home/tameem/projects/opencrvs-core/` (`core-develop` holds the `mul-local-env` branch, `core-release`, feature dirs) or wherever T3 creates them.
 
+A new worktree runs `pnpm install` in the background (see the `post-checkout` hook below). If `node_modules` is missing or a command cannot find a package, read `$(git rev-parse --absolute-git-dir)/pnpm-install.log`. Wait until its last line is `pnpm install: done`. If the last line says `failed`, run `pnpm install` yourself.
+
 ## Local environments
 
 `mul-local-env` runs N environments as host node processes over one shared dependency singleton. Design and the isolation table: `docs/adr/0005-multiple-local-environments.md` (in `/home/tameem/projects/opencrvs-core/core-develop` if this branch lacks it). Vocabulary (environment, name, slot, primary, registry, dependency singleton) is in the `CONTEXT.md` glossary; use those words.
@@ -39,7 +41,7 @@ Slots follow registration order rather than directory name, so read an environme
 
 Every worktree's `.nx/cache` is a symlink to `/home/tameem/projects/opencrvs-core/.nx-cache/`, so a target built in one worktree replays in the others. `.nx/workspace-data` stays private to each worktree; it holds the project graph and daemon state.
 
-A new worktree is linked by the `post-checkout` hook, which also runs `pnpm install` for it. Because `core.hooksPath` is `.husky/`, each worktree has an excluded `.husky/post-checkout` link to the hook. After `nx reset`, which removes the symlink and silently drops that worktree back to a private cache, re-run `~/.dotfiles/opencrvs-core/bin/worktree-overlay`. Its header covers the mechanics.
+A new worktree is linked by the `post-checkout` hook, which also starts `pnpm install` for it in the background. Because `core.hooksPath` is `.husky/`, each worktree has an excluded `.husky/post-checkout` link to the hook. After `nx reset`, which removes the symlink and silently drops that worktree back to a private cache, re-run `~/.dotfiles/opencrvs-core/bin/worktree-overlay`. Its header covers the mechanics.
 
 Hits come between worktrees on the same or nearly the same commit; diverged branches correctly miss. Before calling the cache broken, build a target in one worktree, run it in another, and look for `[local cache]`.
 

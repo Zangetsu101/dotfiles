@@ -92,6 +92,10 @@ teardown
 # --- pnpm install runs for a new worktree only
 setup
 git -C "$T/root/a" worktree add -q -b p "$T/root/p" 2>/dev/null
+# The install runs in the background, so wait for its log to end.
+plog="$T/root/main/.git/worktrees/p/pnpm-install.log"
+for _ in $(seq 50); do grep -q "pnpm install: done" "$plog" 2>/dev/null && break; sleep 0.1; done
+check "new worktree install log says done" grep -qx "pnpm install: done" "$plog"
 check "new worktree runs pnpm install" grep -qx "$T/root/p install --frozen-lockfile --prefer-offline" "$T/pnpm.log"
 git -C "$T/root/p" switch -q -c p2 2>/dev/null
 git -C "$T/root/p" switch -q p 2>/dev/null
