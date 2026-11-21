@@ -82,9 +82,9 @@ export class BackgroundTaskWatcher {
         if (hook === "after-set-option") {
           // Older tmux versions without hook flags remain conservative, as do
           // global/server writes and edits to the routing identity itself.
-          const local = "#{&&:#{hook_flag_t},#{!:#{||:#{hook_flag_g},#{hook_flag_s}}}}"
+          const local = "#{&&:#{hook_flag_t},#{==:#{||:#{hook_flag_g},#{hook_flag_s}},0}}"
           const identity = "#{||:#{==:#{hook_argument_0},@pi_task_family_id},#{||:#{==:#{hook_argument_0},@pi_task_invalidation},#{==:#{hook_argument_0},@pi_task_invalidation_family}}}"
-          scoped = `#{&&:${routable},#{&&:${local},#{!:${identity}}}}`
+          scoped = `#{&&:${routable},#{&&:${local},#{==:${identity},0}}}`
         }
         // Destructive hooks can expose a surviving, unrelated session's options.
         const filename = `#{?${scoped},#{@pi_task_invalidation},tmux-invalidation}`
