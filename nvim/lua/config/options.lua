@@ -1,9 +1,6 @@
 vim.o.showmode = false
 vim.o.signcolumn = 'yes'
 
--- enable current line highlight
-vim.o.cursorline = true
-
 -- number of spaces in a <Tab>
 vim.o.tabstop = 2
 vim.o.softtabstop = 2
@@ -68,6 +65,9 @@ vim.o.foldenable = false
 -- Disable netrw
 vim.g.loaded_netrw = 1
 vim.g.loaded_netrwPlugin = 1
+
+-- Cursor
+vim.opt.guicursor = 'a:block-blinkon0-Cursor,i-ci:ver25-Cursor,r-cr:hor20-Cursor'
 
 -- Show menu even when there is only one match
 vim.o.completeopt = 'menuone,popup,noselect'
