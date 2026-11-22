@@ -53,7 +53,9 @@ Spec reviewer prompt:
 
 > You are the Spec reviewer. Carry out this review directly. Read `<absolute-spec-review-path>` and follow it. Review mode: `<mode>`. File-version instructions: `<instructions from step 1>`. Diff command: `<diff-command>`. Commit list: `<commit-command or "none; uncommitted changes">`. The originating spec is at `<path>` / has these fetched contents: `<contents>`.
 
-Always dispatch the Standards reviewer. Dispatch the Spec reviewer only when a spec is available. When both apply, dispatch them in parallel with independent contexts.
+Always dispatch the Standards reviewer. Dispatch the Spec reviewer only when a spec is available. When both apply, dispatch them in parallel.
+
+Start each reviewer as a fresh subagent whose only context is its prompt, so that it judges only the diff and the sources that its prompt names.
 
 ### 5. Aggregate
 
