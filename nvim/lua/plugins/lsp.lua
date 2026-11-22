@@ -1,14 +1,15 @@
 return {
   'neovim/nvim-lspconfig',
+  tag = 'v2.6.0',
   dependencies = {
     -- Automatically install LSPs and related tools to stdpath for Neovim
     -- Mason must be loaded before its dependents so we need to set it up here.
     -- NOTE: `opts = {}` is the same as calling `require('mason').setup({})`
-    { 'mason-org/mason.nvim', opts = {} },
-    'mason-org/mason-lspconfig.nvim',
+    { 'mason-org/mason.nvim', tag = 'v2.2.0', opts = {} },
+    { 'mason-org/mason-lspconfig.nvim', tag = 'v2.2.0' },
     'WhoIsSethDaniel/mason-tool-installer.nvim',
     -- Useful status updates for LSP
-    { 'j-hui/fidget.nvim', opts = {} },
+    { 'j-hui/fidget.nvim', tag = 'v2.0.0', opts = {} },
   },
   -- This function gets run when an LSP attaches to a particular buffer.
   -- That is to say, every time a new file is opened that is associated with

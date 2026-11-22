@@ -38,6 +38,7 @@ end, { desc = '[F]ind neo-tree at current file or working directory' })
 return {
   'nvim-neo-tree/neo-tree.nvim',
   branch = 'v3.x',
+  tag = '3.38.0',
   dependencies = {
     'nvim-lua/plenary.nvim',
     'nvim-tree/nvim-web-devicons', -- not strictly required, but recommended
@@ -45,7 +46,7 @@ return {
     -- "3rd/image.nvim", -- Optional image support in preview window: See `# Preview Mode` for more information
     {
       's1n7ax/nvim-window-picker',
-      version = '2.*',
+      tag = 'v2.4.0',
       opts = {
         filter_rules = {
           include_current_win = false,

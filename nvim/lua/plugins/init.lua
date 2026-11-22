@@ -8,7 +8,7 @@ return {
   'tpope/vim-repeat',
   {
     'nvim-mini/mini.nvim',
-    version = '*',
+    tag = 'v0.16.0',
     config = function()
       require('mini.ai').setup { n_lines = 500 }
       require('mini.surround').setup()
@@ -60,13 +60,13 @@ return {
   },
   {
     'mrcjkb/haskell-tools.nvim',
-    version = '^4', -- Recommended
+    tag = 'v4.4.3',
     lazy = false, -- This plugin is already lazy
   },
   'mfussenegger/nvim-dap',
   {
     'mrcjkb/rustaceanvim',
-    version = '^6', -- Recommended
+    tag = 'v6.9.7',
     lazy = false, -- This plugin is already lazy
   },
   'NMAC427/guess-indent.nvim', -- Detect tabstop and shiftwidth automatically
