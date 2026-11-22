@@ -1,0 +1,7 @@
+return {
+  settings = {
+    bashIde = {
+      shellcheckPath = '',
+    },
+  },
+}

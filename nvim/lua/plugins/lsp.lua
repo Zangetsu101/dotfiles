@@ -139,7 +139,6 @@ return {
       'clangd',
       'copilot',
       'dockerls',
-      'eslint',
       'ktlint',
       'graphql',
       'ts_ls',
@@ -152,6 +151,8 @@ return {
       'yamlls',
       'lua_ls',
       -- formatters and linters
+      'actionlint',
+      'shellcheck',
       'stylua', -- Used to format Lua code
       'shfmt', -- Used to format shell scripts
       'prettierd',
@@ -165,7 +166,7 @@ return {
       ensure_installed = {}, -- explicitly set to an empty table as we are populating installs via mason-tool-installer
       automatic_installation = false,
       automatic_enable = {
-        exclude = { 'rust_analyzer' },
+        exclude = { 'eslint', 'rust_analyzer' },
       },
     }
   end,
