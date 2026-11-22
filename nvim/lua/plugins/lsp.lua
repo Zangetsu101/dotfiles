@@ -139,6 +139,7 @@ return {
       'clangd',
       'copilot',
       'dockerls',
+      'eslint',
       'ktlint',
       'graphql',
       'ts_ls',
@@ -166,7 +167,7 @@ return {
       ensure_installed = {}, -- explicitly set to an empty table as we are populating installs via mason-tool-installer
       automatic_installation = false,
       automatic_enable = {
-        exclude = { 'eslint', 'rust_analyzer' },
+        exclude = { 'rust_analyzer' },
       },
     }
   end,
