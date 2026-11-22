@@ -9,6 +9,7 @@
 | Starship              | `starship/starship.toml` |
 | Git                   | `git/`                   |
 | Claude Code           | `claude/`                |
+| Gemini / Antigravity  | `gemini/`                |
 | Pi                    | `pi/agent/`              |
 | Agent-agnostic config | `agents/`                |
 | opencrvs-core         | `opencrvs-core/`         |
@@ -61,6 +62,8 @@ ln -s ~/.dotfiles/starship/starship.toml ~/.config/starship.toml
 ln -s ~/.dotfiles/git ~/.config/git
 ln -s ~/.dotfiles/pi/agent/* ~/.pi/agent/
 ln -s ~/.dotfiles/claude/* ~/.claude/
+ln -s ~/.dotfiles/gemini/GEMINI.md ~/.gemini/GEMINI.md
+ln -s ~/.dotfiles/gemini/config/skills ~/.gemini/config/skills
 ln -s ~/.dotfiles/agents ~/.agents
 ln -s ~/.dotfiles/agents/skills ~/.claude/skills
 npm --prefix ~/.dotfiles/pi/agent install
@@ -84,4 +87,4 @@ the shared Bash configuration loads this gitignored file when present.
 Put machine-specific Git settings in `git/config.local`; the shared Git
 configuration includes this gitignored file when present.
 
-> `claude/skills` is itself a symlink to `agents/skills/`, so Claude Code and any other agent can share the same skills.
+> `claude/skills` and `gemini/config/skills` are symlinks to `agents/skills/`, so Claude Code, Gemini/Antigravity, and any other agent share the same skills.
