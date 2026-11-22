@@ -1,5 +1,3 @@
-- Before adding or updating GitHub Actions, look up each action's latest stable release/tag.
-
 ## Communication
 
 Write everything a person reads (chat replies, PRs, issues, commits, code comments, docs) in Simplified Technical English (ASD-STE100):
