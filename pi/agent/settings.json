@@ -5,8 +5,12 @@
   "defaultThinkingLevel": "low",
   "packages": [
     "npm:pi-vim",
-    "npm:pi-claude-bridge"
+    "npm:pi-claude-bridge",
+    "npm:@estebanforge/pi-antigravity-bridge"
   ],
   "theme": "dark",
-  "tuiMode": "regular"
+  "tuiMode": "regular",
+  "extensionChangelogVersions": {
+    "{\"source\":\"npm:@estebanforge/pi-antigravity-bridge\",\"scope\":\"user\"}": "1.13.1"
+  }
 }
