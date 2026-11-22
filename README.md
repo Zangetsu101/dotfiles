@@ -66,7 +66,6 @@ ln -s ~/.dotfiles/gemini/GEMINI.md ~/.gemini/GEMINI.md
 ln -s ~/.dotfiles/gemini/config/skills ~/.gemini/config/skills
 ln -s ~/.dotfiles/agents ~/.agents
 ln -s ~/.dotfiles/agents/AGENTS.md ~/.codex/AGENTS.md
-ln -s ~/.dotfiles/agents/skills ~/.claude/skills
 npm --prefix ~/.dotfiles/pi/agent install
 git -C ~/.dotfiles config core.hooksPath .githooks
 ```
