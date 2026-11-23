@@ -43,11 +43,7 @@ Pick the smallest view that makes the key point clear, using the visual conventi
 
 ### Evidence
 
-Concrete evidence that the change works. Show a before and after.
-
-Screenshots are S-tier - when the environment is set up for it and the change is visual.
-
-Execution-based evidence is A-tier. Test results, console output. Show the exact test that now fails and passes, using pseudocode.
+Use the evidence from /implement. If there is none, collect it with the ranking in [implement/EVIDENCE.md](../implement/EVIDENCE.md). Show a test as pseudocode of the exact test that now fails and passes.
 
 ### Merge Danger
 
