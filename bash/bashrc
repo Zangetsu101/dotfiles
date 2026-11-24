@@ -7,6 +7,11 @@ source "$_dotfiles_bash_dir/aliases.bash"
 source "$_dotfiles_bash_dir/tools.bash"
 source "$_dotfiles_bash_dir/ssh-agent.bash"
 
+# Stop T3 Code from sending product usage events and relay traces.
+export T3CODE_TELEMETRY_ENABLED=false
+# Stop all OpenTelemetry export from T3 Code.
+export T3CODE_OTEL_SDK_DISABLED=true
+
 # Load machine- and employer-specific settings kept in this checkout.
 [ -f "$_dotfiles_bash_dir/bashrc.local" ] && source "$_dotfiles_bash_dir/bashrc.local"
 
